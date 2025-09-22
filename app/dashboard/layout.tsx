@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Button } from "@/components/ui/button"
 import { ModeToggle } from "@/components/mode-toggle"
-import { Home, Settings, MessageSquare, Zap, User2, FileAudio, Phone } from "lucide-react"
+import { Home, Settings, MessageSquare, Zap, User2, FileAudio, Phone, CreditCard } from "lucide-react"
 import { SignedIn, SignOutButton, UserButton } from "@clerk/nextjs"
 
 export default function DashboardLayout({
@@ -147,6 +147,14 @@ export default function DashboardLayout({
                     <Link href="/dashboard/profile">
                       <User2 />
                       <span>Profile</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/billing"}>
+                    <Link href="/dashboard/billing">
+                      <CreditCard />
+                      <span>Billing</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
