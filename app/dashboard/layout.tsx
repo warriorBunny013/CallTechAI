@@ -1,10 +1,10 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { useState, useEffect } from "react"
-import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   SidebarProvider,
   Sidebar,
@@ -16,29 +16,111 @@ import {
   SidebarMenuButton,
   SidebarTrigger,
   SidebarSeparator,
-} from "@/components/ui/sidebar"
-import { Button } from "@/components/ui/button"
-import { ModeToggle } from "@/components/mode-toggle"
-import { Home, Settings, MessageSquare, Zap, User2, FileAudio, Phone } from "lucide-react"
-import { SignedIn, SignOutButton, UserButton } from "@clerk/nextjs"
+} from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { ModeToggle } from "@/components/mode-toggle";
+import {
+  Home,
+  Settings,
+  MessageSquare,
+  Zap,
+  User2,
+  FileAudio,
+  Phone,
+  CreditCard,
+  Loader2,
+} from "lucide-react";
+import { SignedIn, SignOutButton, UserButton } from "@clerk/nextjs";
+import { useSubscription } from "@/hooks/use-subscription";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 export default function DashboardLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
-  const pathname = usePathname()
-  const [mounted, setMounted] = useState(false)
+  const pathname = usePathname();
+  const [mounted, setMounted] = useState(false);
+  const { hasActiveSubscription, loading: subscriptionLoading } =
+    useSubscription();
 
   // Prevent hydration errors
   useEffect(() => {
-    setMounted(true)
-  }, [])
+    setMounted(true);
+  }, []);
 
   if (!mounted) {
-    return null
+    return null;
   }
 
+  // Show loading while checking subscription
+  if (subscriptionLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // If no active subscription and not on pricing page, show pricing
+  if (!hasActiveSubscription && pathname !== "/dashboard/pricing") {
+    return (
+      <SignedIn>
+        <div className="min-h-screen bg-background">
+          <header className="border-b">
+            <div className="flex h-16 items-center gap-4 px-6">
+              <div className="flex items-center gap-2">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-6 w-6 text-rose-500"
+                >
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" x2="12" y1="19" y2="22" />
+                </svg>
+                <span className="text-xl font-bold">CallTechAI</span>
+              </div>
+              <div className="flex-1" />
+              <ModeToggle />
+              <UserButton />
+            </div>
+          </header>
+          <main className="container mx-auto py-8">
+            <Card className="max-w-md mx-auto">
+              <CardHeader className="text-center">
+                <CardTitle>Subscription Required</CardTitle>
+                <CardDescription>
+                  Please subscribe to access the dashboard features
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-center">
+                <Button asChild className="bg-rose-500 hover:bg-rose-600">
+                  <Link href="/dashboard/pricing">View Pricing Plans</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          </main>
+        </div>
+      </SignedIn>
+    );
+  }
+
+  // Show full dashboard for subscribed users
   return (
     <SignedIn>
       <SidebarProvider>
@@ -67,7 +149,10 @@ export default function DashboardLayout({
             <SidebarContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard"}
+                  >
                     <Link href="/dashboard">
                       <Home />
                       <span>Dashboard</span>
@@ -75,7 +160,10 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/customization"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/customization"}
+                  >
                     <Link href="/dashboard/customization">
                       <Settings />
                       <span>Customization</span>
@@ -83,7 +171,10 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/intents"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/intents"}
+                  >
                     <Link href="/dashboard/intents">
                       <MessageSquare />
                       <span>Intents</span>
@@ -91,7 +182,10 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/recordings"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/recordings"}
+                  >
                     <Link href="/dashboard/recordings">
                       <FileAudio />
                       <span>Call Recordings</span>
@@ -99,7 +193,10 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/analytics"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/analytics"}
+                  >
                     <Link href="/dashboard/analytics">
                       <svg
                         xmlns="http://www.w3.org/2000/svg"
@@ -123,7 +220,10 @@ export default function DashboardLayout({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/advanced"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/advanced"}
+                  >
                     <Link href="/dashboard/advanced">
                       <Zap />
                       <span>Advanced</span>
@@ -143,7 +243,21 @@ export default function DashboardLayout({
             <SidebarFooter className="p-4">
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={pathname === "/dashboard/profile"}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/pricing"}
+                  >
+                    <Link href="/dashboard/pricing">
+                      <CreditCard />
+                      <span>Subscription</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/profile"}
+                  >
                     <Link href="/dashboard/profile">
                       <User2 />
                       <span>Profile</span>
@@ -190,5 +304,5 @@ export default function DashboardLayout({
         </div>
       </SidebarProvider>
     </SignedIn>
-  )
+  );
 }
