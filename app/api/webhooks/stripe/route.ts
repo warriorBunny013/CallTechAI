@@ -18,10 +18,18 @@ export async function POST(req: NextRequest) {
       process.env.STRIPE_WEBHOOK_SECRET!,
     );
 
+    console.log(`Webhook received: ${event.type}`);
+
     switch (event.type) {
       case "checkout.session.completed":
         await handleCheckoutSessionCompleted(
           event.data.object as Stripe.Checkout.Session,
+        );
+        break;
+
+      case "customer.subscription.created":
+        await handleSubscriptionCreated(
+          event.data.object as Stripe.Subscription,
         );
         break;
 
@@ -60,57 +68,164 @@ async function handleCheckoutSessionCompleted(
   session: Stripe.Checkout.Session,
 ) {
   const metadata = session.metadata;
-  if (!metadata) return;
+  if (!metadata) {
+    console.error("No metadata in checkout session");
+    return;
+  }
 
   const { userId, plan, billingCycle } = metadata;
 
+  if (!userId) {
+    console.error("No userId in metadata");
+    return;
+  }
+
+  console.log(`Processing checkout for user: ${userId}`);
+
   if (session.subscription && typeof session.subscription === "string") {
     try {
+      // Retrieve full subscription details from Stripe
       const subscription = await stripe.subscriptions.retrieve(
         session.subscription,
       );
 
-      // Type assertion for the subscription object
-      const sub = subscription as any;
+      console.log(`Subscription retrieved: ${subscription.id}`);
 
-      await supabase
+      // Calculate period dates - use current time as fallback for test environment
+      const now = new Date();
+      const currentPeriodStart = (subscription as any).current_period_start 
+        ? new Date((subscription as any).current_period_start * 1000)
+        : now;
+      
+      const currentPeriodEnd = (subscription as any).current_period_end 
+        ? new Date((subscription as any).current_period_end * 1000)
+        : new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30 days from now as fallback
+
+      // Upsert (insert or update) the subscription record
+      const { data, error } = await supabase
         .from("subscriptions")
-        .update({
-          stripe_subscription_id: subscription.id,
-          status: "active",
-          plan_type: plan,
-          billing_cycle: billingCycle,
-          current_period_start: new Date(
-            sub.current_period_start * 1000,
-          ).toISOString(),
-          current_period_end: new Date(
-            sub.current_period_end * 1000,
-          ).toISOString(),
-        })
-        .eq("user_id", userId);
+        .upsert(
+          {
+            user_id: userId,
+            stripe_customer_id: session.customer as string,
+            stripe_subscription_id: subscription.id,
+            status: subscription.status,
+            plan_type: plan || "basic",
+            billing_cycle: billingCycle || "monthly",
+            current_period_start: currentPeriodStart.toISOString(),
+            current_period_end: currentPeriodEnd.toISOString(),
+          },
+          {
+            onConflict: "user_id", // Update if user_id already exists
+          },
+        )
+        .select();
+
+      if (error) {
+        console.error("Error upserting subscription:", error);
+        throw error;
+      }
+
+      console.log("Subscription upserted successfully:", data);
     } catch (error) {
       console.error("Error handling checkout session completed:", error);
+      throw error;
     }
+  } else {
+    console.error("No subscription ID in checkout session");
+  }
+}
+
+async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
+  try {
+    console.log(`Creating subscription: ${subscription.id}`);
+
+    // Get customer details to find user_id
+    const customer = await stripe.customers.retrieve(subscription.customer as string);
+    
+    if (!customer || customer.deleted) {
+      console.error("Customer not found for subscription:", subscription.id);
+      return;
+    }
+
+    const userId = (customer as any).metadata?.userId || (customer as any).metadata?.clerkUserId;
+    
+    if (!userId) {
+      console.error("No userId found in customer metadata for subscription:", subscription.id);
+      return;
+    }
+
+    // Calculate period dates - use current time as fallback for test environment
+    const now = new Date();
+    const currentPeriodStart = (subscription as any).current_period_start 
+      ? new Date((subscription as any).current_period_start * 1000)
+      : now;
+    
+    const currentPeriodEnd = (subscription as any).current_period_end 
+      ? new Date((subscription as any).current_period_end * 1000)
+      : new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30 days from now as fallback
+
+    // Upsert subscription record
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .upsert(
+        {
+          user_id: userId,
+          stripe_customer_id: subscription.customer as string,
+          stripe_subscription_id: subscription.id,
+          status: subscription.status,
+          plan_type: "basic", // Default plan type
+          billing_cycle: subscription.items.data[0]?.price?.recurring?.interval || "monthly",
+          current_period_start: currentPeriodStart.toISOString(),
+          current_period_end: currentPeriodEnd.toISOString(),
+        },
+        {
+          onConflict: "user_id",
+        },
+      )
+      .select();
+
+    if (error) {
+      console.error("Error creating subscription:", error);
+      throw error;
+    }
+
+    console.log("Subscription created successfully:", data);
+  } catch (error) {
+    console.error("Error handling subscription created:", error);
   }
 }
 
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   try {
-    // Type assertion for the subscription object
-    const sub = subscription as any;
+    console.log(`Updating subscription: ${subscription.id}`);
 
-    await supabase
+    // Calculate period dates - use current time as fallback for test environment
+    const now = new Date();
+    const currentPeriodStart = (subscription as any).current_period_start 
+      ? new Date((subscription as any).current_period_start * 1000)
+      : now;
+    
+    const currentPeriodEnd = (subscription as any).current_period_end 
+      ? new Date((subscription as any).current_period_end * 1000)
+      : new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30 days from now as fallback
+
+    const { data, error } = await supabase
       .from("subscriptions")
       .update({
         status: subscription.status,
-        current_period_start: new Date(
-          sub.current_period_start * 1000,
-        ).toISOString(),
-        current_period_end: new Date(
-          sub.current_period_end * 1000,
-        ).toISOString(),
+        current_period_start: currentPeriodStart.toISOString(),
+        current_period_end: currentPeriodEnd.toISOString(),
       })
-      .eq("stripe_subscription_id", subscription.id);
+      .eq("stripe_subscription_id", subscription.id)
+      .select();
+
+    if (error) {
+      console.error("Error updating subscription:", error);
+      throw error;
+    }
+
+    console.log("Subscription updated successfully:", data);
   } catch (error) {
     console.error("Error handling subscription updated:", error);
   }
@@ -118,12 +233,22 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
 
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   try {
-    await supabase
+    console.log(`Deleting subscription: ${subscription.id}`);
+
+    const { data, error } = await supabase
       .from("subscriptions")
       .update({
         status: "canceled",
       })
-      .eq("stripe_subscription_id", subscription.id);
+      .eq("stripe_subscription_id", subscription.id)
+      .select();
+
+    if (error) {
+      console.error("Error deleting subscription:", error);
+      throw error;
+    }
+
+    console.log("Subscription canceled successfully:", data);
   } catch (error) {
     console.error("Error handling subscription deleted:", error);
   }
@@ -131,16 +256,25 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 
 async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
   try {
-    // Type assertion for the invoice object
-    const inv = invoice as any;
+    const subscriptionId = (invoice as any).subscription;
 
-    if (inv.subscription && typeof inv.subscription === "string") {
-      await supabase
+    if (subscriptionId && typeof subscriptionId === "string") {
+      console.log(`Payment succeeded for subscription: ${subscriptionId}`);
+
+      const { data, error } = await supabase
         .from("subscriptions")
         .update({
           status: "active",
         })
-        .eq("stripe_subscription_id", inv.subscription);
+        .eq("stripe_subscription_id", subscriptionId)
+        .select();
+
+      if (error) {
+        console.error("Error updating payment succeeded:", error);
+        throw error;
+      }
+
+      console.log("Payment succeeded updated:", data);
     }
   } catch (error) {
     console.error("Error handling payment succeeded:", error);
@@ -149,16 +283,25 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
 
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   try {
-    // Type assertion for the invoice object
-    const inv = invoice as any;
+    const subscriptionId = (invoice as any).subscription;
 
-    if (inv.subscription && typeof inv.subscription === "string") {
-      await supabase
+    if (subscriptionId && typeof subscriptionId === "string") {
+      console.log(`Payment failed for subscription: ${subscriptionId}`);
+
+      const { data, error } = await supabase
         .from("subscriptions")
         .update({
           status: "past_due",
         })
-        .eq("stripe_subscription_id", inv.subscription);
+        .eq("stripe_subscription_id", subscriptionId)
+        .select();
+
+      if (error) {
+        console.error("Error updating payment failed:", error);
+        throw error;
+      }
+
+      console.log("Payment failed updated:", data);
     }
   } catch (error) {
     console.error("Error handling payment failed:", error);
