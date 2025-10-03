@@ -1,15 +1,18 @@
+// ============================================
+// FILE: app/api/create-checkout-session/route.ts (UPDATED)
+// ============================================
 import { NextRequest, NextResponse } from "next/server";
-// import { stripe, STRIPE_PLANS } from "@/lib/stripe";
 import { stripe } from "@/lib/stripe-server";
 import { STRIPE_PLANS } from "@/lib/stripe";
 import { supabase } from "@/lib/supabase";
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 
 export async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
+    const user = await currentUser();
 
-    if (!userId) {
+    if (!userId || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -21,6 +24,9 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+
+    // Get user email for Stripe customer
+    const userEmail = user.emailAddresses[0]?.emailAddress || "";
 
     // Get or create customer
     let customerId: string;
@@ -37,20 +43,33 @@ export async function POST(req: NextRequest) {
     } else {
       // Create new Stripe customer
       const customer = await stripe.customers.create({
+        email: userEmail,
         metadata: {
           userId,
+          clerkUserId: userId, // Store Clerk user ID
         },
       });
       customerId = customer.id;
 
       // Insert or update subscription record
-      await supabase.from("subscriptions").upsert({
-        user_id: userId,
-        stripe_customer_id: customerId,
-        status: "inactive",
-        plan_type: "basic",
-        billing_cycle: billingCycle,
-      });
+      const { error: upsertError } = await supabase
+        .from("subscriptions")
+        .upsert(
+          {
+            user_id: userId,
+            stripe_customer_id: customerId,
+            status: "inactive",
+            plan_type: "basic",
+            billing_cycle: billingCycle,
+          },
+          {
+            onConflict: "user_id",
+          },
+        );
+
+      if (upsertError) {
+        console.error("Error creating subscription record:", upsertError);
+      }
     }
 
     // Create Stripe checkout session
@@ -66,11 +85,15 @@ export async function POST(req: NextRequest) {
       ],
       mode: "subscription",
       success_url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard/pricing`,
       metadata: {
         userId,
+        clerkUserId: userId,
         plan: "basic",
         billingCycle,
+      },
+      customer_update: {
+        address: "auto",
       },
     });
 

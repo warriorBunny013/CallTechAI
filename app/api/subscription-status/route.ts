@@ -35,7 +35,7 @@ export async function GET() {
     // Check if subscription is active and not expired
     const now = new Date();
     const isActive =
-      subscription.status === "active" &&
+      (subscription.status === "active" || subscription.status === "trialing") &&
       subscription.current_period_end &&
       new Date(subscription.current_period_end) > now;
 

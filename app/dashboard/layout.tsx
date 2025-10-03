@@ -4,7 +4,7 @@ import type React from "react";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   SidebarProvider,
   Sidebar,
@@ -46,8 +46,10 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
-  const { hasActiveSubscription, loading: subscriptionLoading } =
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+  const { hasActiveSubscription, loading: subscriptionLoading, refetch } =
     useSubscription();
 
   // Prevent hydration errors
@@ -55,17 +57,77 @@ export default function DashboardLayout({
     setMounted(true);
   }, []);
 
+  // Check if we're in the middle of payment verification
+  useEffect(() => {
+    const sessionId = searchParams.get('session_id');
+    if (sessionId) {
+      setIsVerifyingPayment(true);
+      
+      // Set a maximum timeout for verification
+      const maxTimeout = setTimeout(() => {
+        console.log('Payment verification timeout, proceeding anyway');
+        setIsVerifyingPayment(false);
+      }, 10000); // 10 second timeout
+      
+      // Verify payment and update subscription
+      const verifyPayment = async () => {
+        try {
+          console.log('Starting payment verification for session:', sessionId);
+          
+          const response = await fetch('/api/verify-payment', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sessionId }),
+          });
+
+          const responseData = await response.json();
+          console.log('Payment verification response:', responseData);
+
+          if (response.ok) {
+            console.log('Payment verified successfully');
+            // Payment verified successfully, refetch subscription
+            await refetch();
+          } else {
+            console.error('Payment verification failed:', responseData);
+            // Still refetch in case webhook updated the subscription
+            await refetch();
+          }
+        } catch (error) {
+          console.error('Error verifying payment in layout:', error);
+          // Still refetch in case webhook updated the subscription
+          await refetch();
+        } finally {
+          clearTimeout(maxTimeout);
+          // Add a small delay to ensure subscription status is updated
+          setTimeout(() => {
+            setIsVerifyingPayment(false);
+          }, 1000);
+        }
+      };
+
+      // Add a small delay before starting verification to ensure Stripe has processed
+      setTimeout(verifyPayment, 500);
+    }
+  }, [searchParams, refetch]);
+
   if (!mounted) {
     return null;
   }
 
-  // Show loading while checking subscription
-  if (subscriptionLoading) {
+  // Show loading while checking subscription or verifying payment
+  if (subscriptionLoading || isVerifyingPayment) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p>Loading...</p>
+          <p>{isVerifyingPayment ? "Verifying payment..." : "Loading..."}</p>
+          {isVerifyingPayment && (
+            <p className="text-sm text-muted-foreground mt-2">
+              This may take a few moments...
+            </p>
+          )}
         </div>
       </div>
     );

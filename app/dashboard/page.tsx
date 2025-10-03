@@ -7,15 +7,35 @@ import Link from "next/link"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useDashboardStats } from "@/hooks/use-dashboard-stats"
 import { useAssistantStatus } from "@/hooks/use-assistant-status"
+import { useSubscription } from "@/hooks/use-subscription"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
+import { useSearchParams } from "next/navigation"
 
 export default function DashboardPage() {
   const { stats, loading, error, refetch } = useDashboardStats()
   const { status, loading: statusLoading, error: statusError, updateStatus } = useAssistantStatus()
+  const { hasActiveSubscription, subscription } = useSubscription()
+  const searchParams = useSearchParams()
+  const [showSuccessMessage, setShowSuccessMessage] = useState(false)
+
+  // Show success message if we just completed payment verification
+  useEffect(() => {
+    const sessionId = searchParams.get('session_id')
+    if (sessionId && hasActiveSubscription) {
+      setShowSuccessMessage(true)
+      toast({
+        title: "Payment Successful!",
+        description: "Your subscription has been activated successfully.",
+      })
+      // Clear the success message after showing it
+      const timer = setTimeout(() => setShowSuccessMessage(false), 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams, hasActiveSubscription])
 
   return (
     <div className="space-y-6">
@@ -25,8 +45,24 @@ export default function DashboardPage() {
           <p className="text-muted-foreground">
             Welcome to your CallTechAI dashboard. Manage and monitor your AI voice assistant.
           </p>
+          {hasActiveSubscription && subscription && (
+            <div className="mt-2 flex items-center space-x-2">
+              <Badge variant="outline" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">
+                {subscription.plan_type.charAt(0).toUpperCase() + subscription.plan_type.slice(1)} Plan
+              </Badge>
+              <Badge variant="outline">
+                {subscription.billing_cycle.charAt(0).toUpperCase() + subscription.billing_cycle.slice(1)}
+              </Badge>
+            </div>
+          )}
         </div>
         <div className="flex items-center space-x-2">
+          {showSuccessMessage && (
+            <div className="flex items-center space-x-2 text-sm text-green-600 dark:text-green-400">
+              <div className="h-2 w-2 rounded-full bg-green-500"></div>
+              <span>Payment successful!</span>
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"
