@@ -62,6 +62,7 @@ export default function PricingPage() {
     }
   };
 
+
   const monthlyPrice = 99;
   const yearlyPrice = 999;
   const yearlyMonthlyEquivalent = Math.round(yearlyPrice / 12);

@@ -11,7 +11,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { sessionId } = await req.json();
+    let sessionId;
+    try {
+      const body = await req.json();
+      sessionId = body.sessionId;
+    } catch (error) {
+      console.error('Error parsing request body:', error);
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
 
     if (!sessionId) {
       return NextResponse.json({ error: "Session ID required" }, { status: 400 });
@@ -102,7 +109,10 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Error verifying payment:", error);
     return NextResponse.json(
-      { error: "Failed to verify payment" },
+      { 
+        error: "Failed to verify payment",
+        details: error instanceof Error ? error.message : "Unknown error"
+      },
       { status: 500 },
     );
   }
