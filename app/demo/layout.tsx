@@ -41,15 +41,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-export default function DashboardLayout({
+export default function DemoLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+  const [verificationAttempted, setVerificationAttempted] = useState(false);
   const { hasActiveSubscription, loading: subscriptionLoading, refetch } =
     useSubscription();
 
@@ -61,14 +63,19 @@ export default function DashboardLayout({
   // Check if we're in the middle of payment verification
   useEffect(() => {
     const sessionId = searchParams.get('session_id');
-    if (sessionId) {
+    
+    // Only run verification once per session
+    if (sessionId && !verificationAttempted) {
+      setVerificationAttempted(true);
       setIsVerifyingPayment(true);
       
       // Set a maximum timeout for verification
       const maxTimeout = setTimeout(() => {
         console.log('Payment verification timeout, proceeding anyway');
         setIsVerifyingPayment(false);
-      }, 10000); // 10 second timeout
+        // Clear the session_id from URL on timeout
+        router.replace('/demo');
+      }, 15000); // 15 second timeout
       
       // Verify payment and update subscription
       const verifyPayment = async () => {
@@ -83,35 +90,51 @@ export default function DashboardLayout({
             body: JSON.stringify({ sessionId }),
           });
 
-          const responseData = await response.json();
+          let responseData;
+          try {
+            responseData = await response.json();
+          } catch (jsonError) {
+            console.error('JSON parse error:', jsonError);
+            // If JSON parsing fails, try to get text response
+            const textResponse = await response.text();
+            console.error('Response text:', textResponse);
+            throw new Error('Invalid JSON response from server');
+          }
+
           console.log('Payment verification response:', responseData);
 
           if (response.ok) {
             console.log('Payment verified successfully');
             // Payment verified successfully, refetch subscription
             await refetch();
+            // Clear the session_id from URL to prevent re-running
+            router.replace('/demo');
           } else {
             console.error('Payment verification failed:', responseData);
             // Still refetch in case webhook updated the subscription
             await refetch();
+            // Clear the session_id from URL even on failure
+            router.replace('/demo');
           }
         } catch (error) {
           console.error('Error verifying payment in layout:', error);
           // Still refetch in case webhook updated the subscription
           await refetch();
+          // Clear the session_id from URL even on error
+          router.replace('/demo');
         } finally {
           clearTimeout(maxTimeout);
           // Add a small delay to ensure subscription status is updated
           setTimeout(() => {
             setIsVerifyingPayment(false);
-          }, 1000);
+          }, 2000);
         }
       };
 
       // Add a small delay before starting verification to ensure Stripe has processed
-      setTimeout(verifyPayment, 500);
+      setTimeout(verifyPayment, 1000);
     }
-  }, [searchParams, refetch]);
+  }, [searchParams, refetch, verificationAttempted]);
 
   if (!mounted) {
     return null;
@@ -168,7 +191,7 @@ export default function DashboardLayout({
               <CardHeader className="text-center">
                 <CardTitle>Subscription Required</CardTitle>
                 <CardDescription>
-                  Please subscribe to access the dashboard features
+                  Please subscribe to access the demo features
                 </CardDescription>
               </CardHeader>
               <CardContent className="text-center">
@@ -183,7 +206,7 @@ export default function DashboardLayout({
     );
   }
 
-  // Show full dashboard for subscribed users
+  // Show full layout with sidebar for subscribed users
   return (
     <SignedIn>
       <SidebarProvider>
