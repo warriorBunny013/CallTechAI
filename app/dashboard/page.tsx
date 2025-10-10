@@ -7,7 +7,7 @@ import Link from "next/link"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useDashboardStats } from "@/hooks/use-dashboard-stats"
 import { useAssistantStatus } from "@/hooks/use-assistant-status"
 import { useSubscription } from "@/hooks/use-subscription"
@@ -15,7 +15,7 @@ import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { useSearchParams } from "next/navigation"
 
-export default function DashboardPage() {
+function DashboardContent() {
   const { stats, loading, error, refetch } = useDashboardStats()
   const { status, loading: statusLoading, error: statusError, updateStatus } = useAssistantStatus()
   const { hasActiveSubscription, subscription } = useSubscription()
@@ -331,5 +331,38 @@ export default function DashboardPage() {
       </div>
       <Toaster />
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="space-y-6">
+        <div className="flex flex-col space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome to your CallTechAI dashboard. Manage and monitor your AI voice assistant.
+          </p>
+        </div>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <div className="h-4 w-24 bg-muted animate-pulse rounded"></div>
+                <div className="h-4 w-4 bg-muted animate-pulse rounded"></div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
+                  <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   )
 }
