@@ -242,7 +242,6 @@ export default function CustomizationPage() {
                   placeholder="Enter greeting in Russian"
                   disabled={language === "english"}
                   className="min-h-[100px]"
-                  className="min-h-[100px]"
                 />
               </div>
             </CardContent>

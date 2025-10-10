@@ -41,7 +41,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-export default function DashboardLayout({
+export default function DemoLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -74,7 +74,7 @@ export default function DashboardLayout({
         console.log('Payment verification timeout, proceeding anyway');
         setIsVerifyingPayment(false);
         // Clear the session_id from URL on timeout
-        router.replace('/dashboard');
+        router.replace('/demo');
       }, 15000); // 15 second timeout
       
       // Verify payment and update subscription
@@ -108,20 +108,20 @@ export default function DashboardLayout({
             // Payment verified successfully, refetch subscription
             await refetch();
             // Clear the session_id from URL to prevent re-running
-            router.replace('/dashboard');
+            router.replace('/demo');
           } else {
             console.error('Payment verification failed:', responseData);
             // Still refetch in case webhook updated the subscription
             await refetch();
             // Clear the session_id from URL even on failure
-            router.replace('/dashboard');
+            router.replace('/demo');
           }
         } catch (error) {
           console.error('Error verifying payment in layout:', error);
           // Still refetch in case webhook updated the subscription
           await refetch();
           // Clear the session_id from URL even on error
-          router.replace('/dashboard');
+          router.replace('/demo');
         } finally {
           clearTimeout(maxTimeout);
           // Add a small delay to ensure subscription status is updated
@@ -191,7 +191,7 @@ export default function DashboardLayout({
               <CardHeader className="text-center">
                 <CardTitle>Subscription Required</CardTitle>
                 <CardDescription>
-                  Please subscribe to access the dashboard features
+                  Please subscribe to access the demo features
                 </CardDescription>
               </CardHeader>
               <CardContent className="text-center">
@@ -206,7 +206,7 @@ export default function DashboardLayout({
     );
   }
 
-  // Show full dashboard for subscribed users
+  // Show full layout with sidebar for subscribed users
   return (
     <SignedIn>
       <SidebarProvider>
