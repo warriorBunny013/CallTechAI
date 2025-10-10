@@ -5,81 +5,42 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "@/components/ui/chart"
-
-// Sample data for charts
-const hourlyData = [
-  { hour: "12 AM", calls: 2 },
-  { hour: "1 AM", calls: 1 },
-  { hour: "2 AM", calls: 0 },
-  { hour: "3 AM", calls: 0 },
-  { hour: "4 AM", calls: 0 },
-  { hour: "5 AM", calls: 0 },
-  { hour: "6 AM", calls: 1 },
-  { hour: "7 AM", calls: 3 },
-  { hour: "8 AM", calls: 8 },
-  { hour: "9 AM", calls: 12 },
-  { hour: "10 AM", calls: 18 },
-  { hour: "11 AM", calls: 15 },
-  { hour: "12 PM", calls: 13 },
-  { hour: "1 PM", calls: 11 },
-  { hour: "2 PM", calls: 14 },
-  { hour: "3 PM", calls: 16 },
-  { hour: "4 PM", calls: 12 },
-  { hour: "5 PM", calls: 8 },
-  { hour: "6 PM", calls: 5 },
-  { hour: "7 PM", calls: 3 },
-  { hour: "8 PM", calls: 2 },
-  { hour: "9 PM", calls: 1 },
-  { hour: "10 PM", calls: 0 },
-  { hour: "11 PM", calls: 0 },
-]
-
-const dailyData = [
-  { day: "Mon", calls: 45 },
-  { day: "Tue", calls: 52 },
-  { day: "Wed", calls: 49 },
-  { day: "Thu", calls: 63 },
-  { day: "Fri", calls: 58 },
-  { day: "Sat", calls: 32 },
-  { day: "Sun", calls: 18 },
-]
-
-const weeklyData = [
-  { week: "Week 1", calls: 245 },
-  { week: "Week 2", calls: 267 },
-  { week: "Week 3", calls: 298 },
-  { week: "Week 4", calls: 317 },
-]
-
-const monthlyData = [
-  { month: "Jan", calls: 980 },
-  { month: "Feb", calls: 1120 },
-  { month: "Mar", calls: 1340 },
-  { month: "Apr", calls: 1490 },
-  { month: "May", calls: 1580 },
-]
-
-// Sample data for call duration
-const callDurationData = [
-  { duration: "<1 min", count: 45 },
-  { duration: "1-2 min", count: 78 },
-  { duration: "2-3 min", count: 103 },
-  { duration: "3-5 min", count: 87 },
-  { duration: "5-10 min", count: 43 },
-  { duration: ">10 min", count: 12 },
-]
-
-// Sample data for call outcomes
-const callOutcomeData = [
-  { outcome: "Intent Matched", count: 245 },
-  { outcome: "Fallback", count: 32 },
-  { outcome: "Transferred", count: 18 },
-  { outcome: "Ended by Caller", count: 15 },
-]
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell, Line, LineChart } from "@/components/ui/chart"
+import { useAnalytics } from "@/hooks/use-analytics"
+import { Loader2, TrendingUp, TrendingDown, Phone, Clock, MessageSquare, AlertCircle, RefreshCw } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 
 export default function AnalyticsPage() {
   const [timeRange, setTimeRange] = useState("7d")
+  const { data, loading, error } = useAnalytics(timeRange)
+
+  const formatDuration = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = seconds % 60
+    return `${minutes}m ${remainingSeconds}s`
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
+          <p className="text-muted-foreground">
+            Monitor call activity and performance metrics for your AI voice assistant.
+          </p>
+        </div>
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="h-5 w-5 text-red-500" />
+            <p className="text-sm font-medium text-red-800 dark:text-red-200">
+              Error loading analytics: {error}
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -90,10 +51,109 @@ export default function AnalyticsPage() {
         </p>
       </div>
 
+      {/* Key Metrics Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Calls</CardTitle>
+            <Phone className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-2">
+                <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
+                <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{data.totalCalls}</div>
+                <p className="text-xs text-muted-foreground">
+                  Calls in selected period
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Avg. Duration</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-2">
+                <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
+                <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{formatDuration(data.averageDuration)}</div>
+                <p className="text-xs text-muted-foreground">
+                  Average call length
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-2">
+                <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
+                <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{data.successRate}%</div>
+                <p className="text-xs text-muted-foreground">
+                  Intent matched successfully
+                </p>
+                <div className="flex items-center space-x-1 mt-1">
+                  <TrendingUp className="h-3 w-3 text-green-500" />
+                  <span className="text-xs text-green-600 dark:text-green-400">
+                    +2.1% from last period
+                  </span>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Fallback Rate</CardTitle>
+            <AlertCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-2">
+                <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
+                <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{data.fallbackRate}%</div>
+                <p className="text-xs text-muted-foreground">
+                  Bot couldn't understand
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+
+
       <div className="flex flex-col space-y-4 md:flex-row md:items-end md:justify-between md:space-y-0">
         <div className="flex flex-col space-y-2 md:flex-row md:space-x-2 md:space-y-0">
           <div className="flex flex-col space-y-1">
-            <Label htmlFor="time-range">Time Range</Label>
+            {/* <Label htmlFor="time-range">Time Range</Label> */}
             <Select value={timeRange} onValueChange={setTimeRange}>
               <SelectTrigger id="time-range" className="w-[180px]">
                 <SelectValue placeholder="Select time range" />
@@ -107,64 +167,163 @@ export default function AnalyticsPage() {
             </Select>
           </div>
         </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => window.location.reload()}
+            disabled={loading}
+            className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-rose-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
       </div>
 
-      <Tabs defaultValue="activity" className="space-y-4">
+      <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="activity">Call Activity</TabsTrigger>
-          <TabsTrigger value="duration">Call Duration</TabsTrigger>
-          <TabsTrigger value="outcomes">Call Outcomes</TabsTrigger>
+          <TabsTrigger value="intents">Popular Intents</TabsTrigger>
         </TabsList>
 
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>Call Outcomes Distribution</CardTitle>
+                <CardDescription>Breakdown of call results</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="h-[300px] flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={data.callOutcomes}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ outcome, percent }) => `${outcome} ${(percent * 100).toFixed(0)}%`}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          dataKey="count"
+                        >
+                          {data.callOutcomes.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={['#f43f5e', '#3b82f6', '#10b981', '#f59e0b', '#ef4444'][index % 5]} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Performance Metrics</CardTitle>
+                <CardDescription>Key performance indicators</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {loading ? (
+                  <div className="space-y-3">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="h-12 bg-muted animate-pulse rounded"></div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Success Rate</span>
+                      <Badge variant="outline" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">
+                        {data.successRate}%
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Fallback Rate</span>
+                      <Badge variant="outline" className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100">
+                        {data.fallbackRate}%
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Transfer Rate</span>
+                      <Badge variant="outline" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                        {data.transferRate}%
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Drop Rate</span>
+                      <Badge variant="outline" className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100">
+                        {data.dropRate}%
+                      </Badge>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
         <TabsContent value="activity" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Call Activity by Time</CardTitle>
-              <CardDescription>
-                {timeRange === "24h"
-                  ? "Hourly call volume for the past 24 hours"
-                  : timeRange === "7d"
-                    ? "Daily call volume for the past 7 days"
-                    : timeRange === "30d"
-                      ? "Weekly call volume for the past 30 days"
-                      : "Monthly call volume for the past 90 days"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={
-                      timeRange === "24h"
-                        ? hourlyData
-                        : timeRange === "7d"
-                          ? dailyData
-                          : timeRange === "30d"
-                            ? weeklyData
-                            : monthlyData
-                    }
-                    margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey={
-                        timeRange === "24h"
-                          ? "hour"
-                          : timeRange === "7d"
-                            ? "day"
-                            : timeRange === "30d"
-                              ? "week"
-                              : "month"
-                      }
-                    />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="calls" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
+                      <Card>
+              <CardHeader>
+                <CardTitle>Call Activity by Time</CardTitle>
+                <CardDescription>
+                  {timeRange === "24h"
+                    ? "Hourly call volume for the past 24 hours"
+                    : timeRange === "7d"
+                      ? "Daily call volume for the past 7 days"
+                      : timeRange === "30d"
+                        ? "Weekly call volume for the past 30 days"
+                        : "Monthly call volume for the past 90 days"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="h-[400px] flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="h-[400px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={
+                          timeRange === "24h"
+                            ? data.hourlyDistribution
+                            : timeRange === "7d"
+                              ? data.dailyDistribution
+                              : timeRange === "30d"
+                                ? data.weeklyDistribution
+                                : data.monthlyDistribution
+                        }
+                        margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey={
+                            timeRange === "24h"
+                              ? "hour"
+                              : timeRange === "7d"
+                                ? "day"
+                                : timeRange === "30d"
+                                  ? "week"
+                                  : "month"
+                          }
+                        />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="calls" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
@@ -173,23 +332,29 @@ export default function AnalyticsPage() {
                 <CardDescription>Hours with the highest call volume</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={hourlyData
-                        .slice()
-                        .sort((a, b) => b.calls - a.calls)
-                        .slice(0, 5)}
-                      margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="hour" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="calls" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                {loading ? (
+                  <div className="h-[300px] flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={data.hourlyDistribution
+                          .slice()
+                          .sort((a, b) => b.calls - a.calls)
+                          .slice(0, 5)}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="hour" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="calls" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -199,62 +364,74 @@ export default function AnalyticsPage() {
                 <CardDescription>Call volume by day of the week</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dailyData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="day" />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="calls" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                {loading ? (
+                  <div className="h-[300px] flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={data.dailyDistribution} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="day" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="calls" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
-        <TabsContent value="duration" className="space-y-4">
+        <TabsContent value="intents" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Call Duration Distribution</CardTitle>
-              <CardDescription>Breakdown of calls by duration</CardDescription>
+              <CardTitle>Popular Intents</CardTitle>
+              <CardDescription>Most frequently used intents and questions</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={callDurationData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="duration" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="outcomes" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Call Outcomes</CardTitle>
-              <CardDescription>Breakdown of call results</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={callOutcomeData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="outcome" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#f43f5e" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+              {loading ? (
+                <div className="h-[400px] flex items-center justify-center">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : data.popularIntents.length > 0 ? (
+                <div className="space-y-4">
+                  {data.popularIntents
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 10)
+                    .map((intent, index) => (
+                      <div key={intent.name} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-900">
+                            <span className="text-sm font-bold text-rose-700 dark:text-rose-300">
+                              {index + 1}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="font-medium">{intent.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {intent.count} times used
+                            </p>
+                          </div>
+                        </div>
+                        <Badge variant="outline">
+                          {Math.round((intent.count / data.totalCalls) * 100)}% of calls
+                        </Badge>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <MessageSquare className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No intent data available</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Start creating intents to see usage analytics
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
