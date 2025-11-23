@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { auth } from '@clerk/nextjs/server'
 
 export async function GET(request: NextRequest) {
   try {
-    // Test 1: GET all intents
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    // Test 1: GET all intents for this user
     const { data: intents, error: getError } = await supabase
       .from('intents')
       .select('*')
+      .eq('user_id', userId)
     
     if (getError) {
       return NextResponse.json({ error: 'GET test failed', details: getError })
@@ -14,6 +25,7 @@ export async function GET(request: NextRequest) {
 
     // Test 2: POST new intent
     const testIntent = {
+      user_id: userId,
       intent_name: "Test Intent",
       example_user_phrases: ["Test phrase 1", "Test phrase 2"],
       english_responses: ["Test English response"],
@@ -42,6 +54,7 @@ export async function GET(request: NextRequest) {
       .from('intents')
       .update(updateData)
       .eq('id', newIntent.id)
+      .eq('user_id', userId)
       .select()
       .single()
 
@@ -54,6 +67,7 @@ export async function GET(request: NextRequest) {
       .from('intents')
       .delete()
       .eq('id', newIntent.id)
+      .eq('user_id', userId)
 
     if (deleteError) {
       return NextResponse.json({ error: 'DELETE test failed', details: deleteError })

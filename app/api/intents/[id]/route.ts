@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { auth } from '@clerk/nextjs/server'
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const { id } = params
     const body = await request.json()
     const { intent_name, example_user_phrases, english_responses, russian_responses } = body
@@ -18,6 +28,21 @@ export async function PUT(
       )
     }
 
+    // First verify the intent belongs to the user
+    const { data: existingIntent, error: checkError } = await supabase
+      .from('intents')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single()
+
+    if (checkError || !existingIntent) {
+      return NextResponse.json(
+        { error: 'Intent not found or unauthorized' },
+        { status: 404 }
+      )
+    }
+
     const { data: intent, error } = await supabase
       .from('intents')
       .update({
@@ -27,6 +52,7 @@ export async function PUT(
         russian_responses,
       })
       .eq('id', id)
+      .eq('user_id', userId)
       .select()
       .single()
 
@@ -60,12 +86,37 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const { id } = params
+
+    // First verify the intent belongs to the user
+    const { data: existingIntent, error: checkError } = await supabase
+      .from('intents')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single()
+
+    if (checkError || !existingIntent) {
+      return NextResponse.json(
+        { error: 'Intent not found or unauthorized' },
+        { status: 404 }
+      )
+    }
 
     const { error } = await supabase
       .from('intents')
       .delete()
       .eq('id', id)
+      .eq('user_id', userId)
 
     if (error) {
       console.error('Supabase error:', error)
