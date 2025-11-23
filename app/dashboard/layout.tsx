@@ -50,8 +50,17 @@ function DashboardLayoutContent({
   const router = useRouter();
   const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
-  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
+  // Initialize isVerifyingPayment to true if session_id exists (synchronous check)
+  const [isVerifyingPayment, setIsVerifyingPayment] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.has('session_id');
+    }
+    return false;
+  });
   const [verificationAttempted, setVerificationAttempted] = useState(false);
+  const [paymentJustCompleted, setPaymentJustCompleted] = useState(false);
+  const [overrideSubscriptionCheck, setOverrideSubscriptionCheck] = useState(false);
   const { hasActiveSubscription, loading: subscriptionLoading, refetch } =
     useSubscription();
 
@@ -60,14 +69,29 @@ function DashboardLayoutContent({
     setMounted(true);
   }, []);
 
+  // Clear override flag when subscription becomes active
+  useEffect(() => {
+    if (hasActiveSubscription && overrideSubscriptionCheck) {
+      setOverrideSubscriptionCheck(false);
+      setPaymentJustCompleted(false);
+    }
+  }, [hasActiveSubscription, overrideSubscriptionCheck]);
+
   // Check if we're in the middle of payment verification
   useEffect(() => {
     const sessionId = searchParams.get('session_id');
+    
+    // If we have a session_id, override subscription check to allow access
+    if (sessionId) {
+      setOverrideSubscriptionCheck(true);
+    }
     
     // Only run verification once per session
     if (sessionId && !verificationAttempted) {
       setVerificationAttempted(true);
       setIsVerifyingPayment(true);
+      // Immediately refetch subscription status when we detect a session_id
+      refetch();
       
       // Set a maximum timeout for verification
       const maxTimeout = setTimeout(() => {
@@ -107,12 +131,53 @@ function DashboardLayoutContent({
             console.log('Payment verified successfully');
             // Payment verified successfully, refetch subscription
             await refetch();
-            // Clear the session_id from URL to prevent re-running
-            router.replace('/dashboard');
+            
+            // Poll for subscription status to become active (with max 10 attempts)
+            let attempts = 0;
+            let subscriptionActive = false;
+            while (attempts < 10 && !subscriptionActive) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              await refetch();
+              // Check if subscription is now active by fetching fresh status
+              const statusResponse = await fetch('/api/subscription-status');
+              const statusData = await statusResponse.json();
+              if (statusData.hasActiveSubscription) {
+                subscriptionActive = true;
+                console.log('Subscription confirmed active');
+                // Mark that payment just completed to allow access
+                setPaymentJustCompleted(true);
+                // Clear override since subscription is now confirmed active
+                setOverrideSubscriptionCheck(false);
+              }
+              attempts++;
+            }
+            
+            // Only clear the session_id from URL after confirming subscription is active
+            // This ensures we don't block access prematurely
+            if (subscriptionActive) {
+              // Wait a bit more to ensure state has updated
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              router.replace('/dashboard');
+            } else {
+              // If still not active after polling, clear session_id anyway but keep access
+              console.warn('Subscription not yet active after polling, but allowing access');
+              setPaymentJustCompleted(true);
+              router.replace('/dashboard');
+            }
           } else {
             console.error('Payment verification failed:', responseData);
             // Still refetch in case webhook updated the subscription
             await refetch();
+            // Wait a bit and refetch again
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await refetch();
+            // Check if subscription became active via webhook
+            const statusResponse = await fetch('/api/subscription-status');
+            const statusData = await statusResponse.json();
+            if (statusData.hasActiveSubscription) {
+              setPaymentJustCompleted(true);
+              setOverrideSubscriptionCheck(false);
+            }
             // Clear the session_id from URL even on failure
             router.replace('/dashboard');
           }
@@ -120,14 +185,24 @@ function DashboardLayoutContent({
           console.error('Error verifying payment in layout:', error);
           // Still refetch in case webhook updated the subscription
           await refetch();
+          // Wait a bit and refetch again
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await refetch();
+          // Check if subscription became active via webhook
+          const statusResponse = await fetch('/api/subscription-status');
+          const statusData = await statusResponse.json();
+          if (statusData.hasActiveSubscription) {
+            setPaymentJustCompleted(true);
+            setOverrideSubscriptionCheck(false);
+          }
           // Clear the session_id from URL even on error
           router.replace('/dashboard');
         } finally {
           clearTimeout(maxTimeout);
-          // Add a small delay to ensure subscription status is updated
+          // Add a small delay to ensure subscription status is updated before hiding loading
           setTimeout(() => {
             setIsVerifyingPayment(false);
-          }, 2000);
+          }, 500);
         }
       };
 
@@ -157,8 +232,12 @@ function DashboardLayoutContent({
     );
   }
 
+  // Check if we have a session_id (user just completed payment)
+  const hasSessionId = searchParams.get('session_id');
+  
   // If no active subscription and not on pricing page, show pricing
-  if (!hasActiveSubscription && pathname !== "/dashboard/pricing") {
+  // BUT allow access if we're currently verifying payment OR have a session_id OR payment just completed OR override is set
+  if (!hasActiveSubscription && pathname !== "/dashboard/pricing" && !isVerifyingPayment && !hasSessionId && !paymentJustCompleted && !overrideSubscriptionCheck) {
     return (
       <SignedIn>
         <div className="min-h-screen bg-background">
