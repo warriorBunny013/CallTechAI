@@ -30,6 +30,8 @@ import {
   Phone,
   CreditCard,
   Loader2,
+  Bot,
+  Clock,
 } from "lucide-react";
 import { SignedIn, SignOutButton, UserButton } from "@clerk/nextjs";
 import { useSubscription } from "@/hooks/use-subscription";
@@ -324,7 +326,7 @@ function DashboardLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/customization"}
@@ -337,6 +339,17 @@ function DashboardLayoutContent({
                       </Badge>
                     </Link>
                   </SidebarMenuButton>
+                </SidebarMenuItem> */}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/assistants"}
+                  >
+                    <Link href="/dashboard/assistants">
+                      <Bot />
+                      <span>Assistants</span>
+                    </Link>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
@@ -346,6 +359,17 @@ function DashboardLayoutContent({
                     <Link href="/dashboard/intents">
                       <MessageSquare />
                       <span>Intents</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/phone-numbers"}
+                  >
+                    <Link href="/dashboard/phone-numbers">
+                      <Phone />
+                      <span>Phone Numbers</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -387,6 +411,17 @@ function DashboardLayoutContent({
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400">
                         Upcoming
                       </Badge>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/working-hours"}
+                  >
+                    <Link href="/dashboard/working-hours">
+                      <Clock />
+                      <span>Working Hours</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

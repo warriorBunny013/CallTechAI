@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { auth } from '@clerk/nextjs/server'
 
 export async function GET(request: NextRequest) {
   try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const { data: intents, error } = await supabase
       .from('intents')
       .select('*')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -28,6 +39,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
     const { intent_name, example_user_phrases, english_responses, russian_responses } = body
 
@@ -42,6 +62,7 @@ export async function POST(request: NextRequest) {
     const { data: intent, error } = await supabase
       .from('intents')
       .insert({
+        user_id: userId,
         intent_name,
         example_user_phrases,
         english_responses,

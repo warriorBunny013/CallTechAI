@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { auth } from '@clerk/nextjs/server'
 
 export async function GET(request: NextRequest) {
   try {
-    // Fetch intents count from Supabase
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    // Fetch intents count from Supabase for this user
     const { count: intentsCount, error: intentsError } = await supabase
       .from('intents')
       .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
 
     if (intentsError) {
       console.error('Supabase intents error:', intentsError)
@@ -16,10 +27,11 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Fetch assistant status from Supabase
+    // Fetch assistant status from Supabase for this user
     const { data: assistantSettings, error: assistantError } = await supabase
       .from('assistant_settings')
       .select('is_active')
+      .eq('user_id', userId)
       .single()
 
     if (assistantError && assistantError.code !== 'PGRST116') { // PGRST116 = no rows returned

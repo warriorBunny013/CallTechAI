@@ -14,6 +14,7 @@ import { useSubscription } from "@/hooks/use-subscription"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { useSearchParams } from "next/navigation"
+import { SetupWizard } from "@/components/setup-wizard"
 
 function DashboardContent() {
   const { stats, loading, error, refetch } = useDashboardStats()
@@ -21,6 +22,7 @@ function DashboardContent() {
   const { hasActiveSubscription, subscription } = useSubscription()
   const searchParams = useSearchParams()
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
+  const [showWizard, setShowWizard] = useState(true)
 
   // Show success message if we just completed payment verification
   useEffect(() => {
@@ -216,54 +218,34 @@ function DashboardContent() {
       )}
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Setup</CardTitle>
-            <CardDescription>Configure your AI voice assistant in minutes</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-900">
-                    <span className="text-sm font-bold text-rose-700 dark:text-rose-300">1</span>
+        {showWizard ? (
+          <SetupWizard onComplete={() => {
+            setShowWizard(false)
+            refetch()
+          }} />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Setup Complete</CardTitle>
+              <CardDescription>Your assistant is configured and ready to use</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-4">
+                  <div className="flex items-center gap-2 text-green-800 dark:text-green-200">
+                    <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                    <span className="text-sm font-medium">All setup steps completed!</span>
                   </div>
-                  <span>Configure basic settings</span>
                 </div>
-                <div className="text-sm text-muted-foreground">Done</div>
+                <Button variant="outline" className="w-full" asChild>
+                  <Link href="/dashboard/phone-numbers">
+                    Manage Phone Numbers
+                  </Link>
+                </Button>
               </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-900">
-                    <span className="text-sm font-bold text-rose-700 dark:text-rose-300">2</span>
-                  </div>
-                  <span>Set up intents</span>
-                </div>
-                <div className="text-sm text-muted-foreground">In progress</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-900">
-                    <span className="text-sm font-bold text-rose-700 dark:text-rose-300">3</span>
-                  </div>
-                  <span>Configure working hours</span>
-                </div>
-                <div className="text-sm text-muted-foreground">Pending</div>
-              </div>
-            </div>
-            <div className="flex flex-col space-y-2 sm:flex-row sm:space-x-2 sm:space-y-0">
-              <Button asChild className="w-full bg-rose-500 hover:bg-rose-600">
-                <Link href="/dashboard/customization">
-                  Continue Setup <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button variant="outline" className="w-full">
-                <Play className="mr-2 h-4 w-4 text-rose-500" />
-                Try Demo Call
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader>
             <CardTitle>Recent Calls</CardTitle>

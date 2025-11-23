@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { auth } from '@clerk/nextjs/server'
 
 export async function GET(request: NextRequest) {
   try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const { searchParams } = new URL(request.url)
     const timeRange = searchParams.get('timeRange') || '7d'
     
@@ -164,10 +174,11 @@ export async function GET(request: NextRequest) {
     
     // const analytics = processAnalyticsData(filteredCalls, timeRange, startDate, now)
 
-    // Fetch popular intents from Supabase
+    // Fetch popular intents from Supabase for this user
     const { data: intents } = await supabase
       .from('intents')
       .select('intent_name')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
 
     // Add intent data to analytics
