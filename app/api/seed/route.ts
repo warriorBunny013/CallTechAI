@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { sampleIntents } from '@/lib/sample-data'
+import { auth } from '@clerk/nextjs/server'
 
 export async function POST(request: NextRequest) {
   try {
-    // Clear existing data
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    // Clear existing data for this user only
     const { error: deleteError } = await supabase
       .from('intents')
       .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000') // Delete all records
+      .eq('user_id', userId)
 
     if (deleteError) {
       console.error('Error clearing data:', deleteError)
@@ -18,10 +28,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Insert sample data
+    // Insert sample data with user_id
+    const intentsWithUserId = sampleIntents.map(intent => ({
+      ...intent,
+      user_id: userId
+    }))
+
     const { data: intents, error: insertError } = await supabase
       .from('intents')
-      .insert(sampleIntents)
+      .insert(intentsWithUserId)
       .select()
 
     if (insertError) {
