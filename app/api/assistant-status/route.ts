@@ -1,15 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
+import { auth } from '@clerk/nextjs/server'
 
 export async function GET(request: NextRequest) {
   try {
-    // Get current assistant status from database
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
+    // Get current assistant status from database for this user
     let isActive = true // Default to active
     
     try {
       const { data: settings, error } = await supabase
         .from('assistant_settings')
         .select('is_active')
+        .eq('user_id', userId)
         .single()
 
       if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
@@ -38,6 +49,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
     const { isActive } = body
 
@@ -48,18 +68,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Update or create assistant settings in database
+    // Update or create assistant settings in database for this user
     let dbSuccess = false
     
     try {
       const { data, error } = await supabase
         .from('assistant_settings')
         .upsert({ 
-          id: 1, 
+          user_id: userId,
           is_active: isActive,
           updated_at: new Date().toISOString()
         }, {
-          onConflict: 'id'
+          onConflict: 'user_id'
         })
 
       if (error) {
