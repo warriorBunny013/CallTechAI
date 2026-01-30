@@ -285,8 +285,8 @@ function DashboardContent() {
                       }`}>
                         {call.status === 'completed' ? '✓' : '✗'}
                       </div>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <Play className="h-4 w-4 text-rose-500" />
+                      <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-lime-50 dark:hover:bg-lime-950/20">
+                        <Play className="h-4 w-4 text-lime-500" />
                       </Button>
                     </div>
                   </div>
