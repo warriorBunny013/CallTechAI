@@ -297,7 +297,7 @@ export default function PhoneNumbersPage() {
               setNumberType('free')
               setIsDialogOpen(true)
             }}
-            className="bg-rose-500 hover:bg-rose-600"
+            className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
           >
             <Plus className="h-4 w-4 mr-2" />
             Create Free Number
@@ -329,7 +329,7 @@ export default function PhoneNumbersPage() {
                 setNumberType('free')
                 setIsDialogOpen(true)
               }}
-              className="bg-rose-500 hover:bg-rose-600"
+              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
             >
               <Plus className="h-4 w-4 mr-2" />
               Create Your First Number
@@ -469,7 +469,7 @@ export default function PhoneNumbersPage() {
             <Button
               onClick={handleCreateFreeNumber}
               disabled={isCreating}
-              className="bg-rose-500 hover:bg-rose-600"
+              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
             >
               {isCreating ? (
                 <>
@@ -533,7 +533,7 @@ export default function PhoneNumbersPage() {
             <Button
               onClick={handleImportNumber}
               disabled={isCreating}
-              className="bg-rose-500 hover:bg-rose-600"
+              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
             >
               {isCreating ? (
                 <>
