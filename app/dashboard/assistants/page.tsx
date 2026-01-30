@@ -243,14 +243,14 @@ export default function AssistantsPage() {
             <Card
               key={agent.id}
               className={`transition-all hover:shadow-lg ${
-                selectedAgent === agent.id ? 'ring-2 ring-rose-500' : ''
+                selectedAgent === agent.id ? 'ring-2 ring-lime-500' : ''
               }`}
             >
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <CardTitle className="flex items-center gap-2">
-                      <Bot className="h-5 w-5 text-rose-500" />
+                      <Bot className="h-5 w-5 text-lime-500" />
                       {agent.name}
                     </CardTitle>
                     <CardDescription className="mt-2">
@@ -286,7 +286,7 @@ export default function AssistantsPage() {
                 <Button
                   onClick={() => handleCreateAssistant(agent.id)}
                   disabled={isCreating || userIntents.length === 0}
-                  className="w-full bg-rose-500 hover:bg-rose-600"
+                  className="w-full bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
                 >
                   {isCreating && selectedAgent === agent.id ? (
                     <>

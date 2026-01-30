@@ -258,7 +258,7 @@ export default function IntentsPage() {
           <p className="text-muted-foreground">Create and manage conversation intents for your AI assistant</p>
         </div>
         <div>
-          <Button onClick={handleNewIntent} className="bg-rose-500 hover:bg-rose-600">
+          <Button onClick={handleNewIntent} className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200">
             <Plus className="mr-2 h-4 w-4" />
             Add Intent
           </Button>
@@ -274,7 +274,7 @@ export default function IntentsPage() {
               <p className="text-sm text-muted-foreground text-center mt-2 mb-4">
                 Create your first intent to teach your assistant how to respond to specific questions.
               </p>
-              <Button onClick={handleNewIntent} className="bg-rose-500 hover:bg-rose-600">
+              <Button onClick={handleNewIntent} className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200">
                 <Plus className="mr-2 h-4 w-4" />
                 Create Intent
               </Button>
@@ -349,7 +349,7 @@ export default function IntentsPage() {
                       <Button
                         size="sm"
                         onClick={() => handleEditIntent(intent)}
-                        className="bg-rose-500 hover:bg-rose-600"
+                        className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
                       >
                         <Edit className="mr-2 h-4 w-4" />
                         Edit
@@ -494,7 +494,7 @@ export default function IntentsPage() {
             <Button
               onClick={handleSaveIntent}
               disabled={!currentIntent.intent_name || isSaving}
-              className="bg-rose-500 hover:bg-rose-600"
+              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
             >
               {isSaving ? "Saving..." : isEditing ? "Update Intent" : "Create Intent"}
             </Button>

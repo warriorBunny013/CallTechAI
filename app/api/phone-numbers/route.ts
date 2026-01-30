@@ -1,3 +1,19 @@
+/**
+ * Phone Numbers API
+ * 
+ * CRITICAL OWNERSHIP MODEL:
+ * - phone_numbers.phone_number stores the CLINIC phone number (caller's number)
+ * - When a call arrives, we lookup by From (caller's clinic number) to get user_id
+ * - Multiple users MAY forward to the SAME assistant number
+ * - Call ownership is determined by caller's clinic number, NOT assistant number
+ * 
+ * FLOW:
+ * 1. User enters their clinic phone number (the number that will call)
+ * 2. System creates/imports VAPI phone number (assistant number - where calls are forwarded)
+ * 3. User links clinic number to assistant
+ * 4. When call comes FROM clinic number TO assistant number, lookup by From to get user_id
+ */
+
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { auth } from '@clerk/nextjs/server'
