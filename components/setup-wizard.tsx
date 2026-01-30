@@ -188,13 +188,13 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
   ]
 
   return (
-    <Card className="border-2 border-rose-500/20 bg-gradient-to-br from-rose-50/50 to-pink-50/50 dark:from-rose-950/20 dark:to-pink-950/20">
+    <Card className="border-2 border-lime-500/20 bg-gradient-to-br from-lime-50/50 to-lime-100/30 dark:from-lime-950/20 dark:to-lime-900/10 shadow-xl rounded-xl">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Rocket className="h-5 w-5 text-rose-500" />
+        <CardTitle className="flex items-center gap-2 text-xl">
+          <Rocket className="h-5 w-5 text-lime-500" />
           Setup Your Assistant
         </CardTitle>
-        <CardDescription>
+        <CardDescription className="text-base">
           Follow these steps to get your AI voice assistant up and running
         </CardDescription>
       </CardHeader>
@@ -206,17 +206,17 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
           return (
             <div
               key={step.id}
-              className={`flex items-start gap-4 p-4 rounded-lg border transition-all ${
+              className={`flex items-start gap-4 p-5 rounded-xl border-2 transition-all duration-300 ${
                 step.completed
-                  ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800'
+                  ? 'bg-green-50 dark:bg-green-950/20 border-green-300 dark:border-green-700 shadow-md'
                   : isActive
-                  ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800'
+                  ? 'bg-lime-50 dark:bg-lime-950/20 border-lime-300 dark:border-lime-700 shadow-lg'
                   : 'bg-muted border-border opacity-60'
               }`}
             >
               <div className={`flex-shrink-0 mt-1 ${
                 step.completed ? 'text-green-600 dark:text-green-400' : 
-                isActive ? 'text-rose-600 dark:text-rose-400' : 
+                isActive ? 'text-lime-600 dark:text-lime-400' : 
                 'text-muted-foreground'
               }`}>
                 {step.completed ? (
@@ -229,9 +229,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
               <div className="flex-1">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className={`font-semibold flex items-center gap-2 ${
+                    <h3 className={`font-bold flex items-center gap-2 text-base ${
                       step.completed ? 'text-green-900 dark:text-green-100' :
-                      isActive ? 'text-rose-900 dark:text-rose-100' :
+                      isActive ? 'text-lime-900 dark:text-lime-100' :
                       'text-muted-foreground'
                     }`}>
                       <Icon className="h-4 w-4" />
@@ -243,7 +243,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                   </div>
                   
                   {step.completed && (
-                    <Badge variant="outline" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">
+                    <Badge variant="outline" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100 border-green-300 dark:border-green-700">
                       Complete
                     </Badge>
                   )}
@@ -252,7 +252,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 {!step.completed && isActive && (
                   <div className="mt-3">
                     {step.link ? (
-                      <Button asChild size="sm" className="bg-rose-500 hover:bg-rose-600">
+                      <Button asChild size="sm" className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-md hover:shadow-lg transition-all duration-200">
                         <Link href={step.link}>
                           Go to {step.title}
                           <ArrowRight className="h-4 w-4 ml-2" />
@@ -263,7 +263,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                         size="sm"
                         onClick={step.action}
                         disabled={step.disabled || step.loading}
-                        className="bg-rose-500 hover:bg-rose-600"
+                        className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-md hover:shadow-lg transition-all duration-200"
                       >
                         {step.loading ? (
                           <>

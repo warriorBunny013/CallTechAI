@@ -167,7 +167,7 @@ export default function PricingPage() {
               <Button
                 onClick={handleSubscribe}
                 disabled={loading}
-                className="w-full bg-rose-500 hover:bg-rose-600"
+                className="w-full bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
               >
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Get Started
