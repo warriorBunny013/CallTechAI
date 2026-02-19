@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -9,10 +10,37 @@ import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Check, Play, Calendar, MessageSquare, Bot, BarChart3, Clock, Globe, ArrowRight } from "lucide-react"
-import { SignInButton, SignUpButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { LogOut } from "lucide-react"
 
 export default function LandingPage() {
   const [isAnnual, setIsAnnual] = useState(true)
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const router = useRouter()
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => r.json())
+      .then((data) => {
+        setUser(data.user ?? null)
+        setAuthLoading(false)
+      })
+      .catch(() => setAuthLoading(false))
+  }, [])
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" })
+    setUser(null)
+    router.push("/")
+    router.refresh()
+  }
 
   const pricing = {
     basic: { monthly: 99, annual: 79 },
@@ -55,26 +83,40 @@ export default function LandingPage() {
             </Link>
           </nav>
           <div className="flex items-center gap-4">
-            <SignedOut>
-              <SignInButton>
-                <Button variant="ghost" size="sm">
-                  Log in
+            {!authLoading && !user && (
+              <>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/login">Log in</Link>
                 </Button>
-              </SignInButton>
-              <SignUpButton>
-                <Button size="sm" className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200">
-                  Sign up
+                <Button size="sm" className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200" asChild>
+                  <Link href="/signup">Sign up</Link>
                 </Button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
-              <Link href="/dashboard">
-                <Button size="sm" className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200">
-                  Dashboard
+              </>
+            )}
+            {!authLoading && user && (
+              <>
+                <Button size="sm" className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200" asChild>
+                  <Link href="/dashboard">Dashboard</Link>
                 </Button>
-              </Link>
-              <UserButton />
-            </SignedIn>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="rounded-full">
+                      <Avatar className="h-8 w-8">
+                        <AvatarFallback className="bg-lime-500/20 text-lime-600 dark:text-lime-400 text-sm">
+                          {(user.email?.[0] ?? "U").toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Log out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -95,21 +137,19 @@ export default function LandingPage() {
                 </p>
               </div>
               <div className="flex flex-col gap-3 min-[400px]:flex-row pt-4">
-                <SignedOut>
-                  <SignUpButton>
-                    <Button size="lg" className="bg-lime-500 hover:bg-lime-600 text-black font-bold shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 px-8 py-6 text-lg group">
+                {!authLoading && !user && (
+                  <Button size="lg" className="bg-lime-500 hover:bg-lime-600 text-black font-bold shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 px-8 py-6 text-lg group" asChild>
+                    <Link href="/signup">
                       Start Free Trial
                       <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                    </Button>
-                  </SignUpButton>
-                </SignedOut>
-                <SignedIn>
-                  <Link href="/dashboard">
-                    <Button size="lg" className="bg-lime-500 hover:bg-lime-600 text-black font-bold shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 px-8 py-6 text-lg">
-                      Go to Dashboard
-                    </Button>
-                  </Link>
-                </SignedIn>
+                    </Link>
+                  </Button>
+                )}
+                {!authLoading && user && (
+                  <Button size="lg" className="bg-lime-500 hover:bg-lime-600 text-black font-bold shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-105 px-8 py-6 text-lg" asChild>
+                    <Link href="/dashboard">Go to Dashboard</Link>
+                  </Button>
+                )}
                 <Button size="lg" variant="outline" className="group border-2 border-black dark:border-white hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition-all duration-300 font-semibold px-8 py-6 text-lg">
                   <Play className="mr-2 h-5 w-5 text-lime-500 group-hover:text-white dark:group-hover:text-black transition-colors" />
                   Watch Demo
@@ -413,7 +453,9 @@ export default function LandingPage() {
                     </ul>
                   </CardContent>
                   <CardFooter>
-                    <Button className="w-full bg-lime-500 hover:bg-lime-600 text-black font-bold shadow-lg hover:shadow-xl transition-all duration-300 py-6 text-lg">Start Free Trial</Button>
+                    <Button className="w-full bg-lime-500 hover:bg-lime-600 text-black font-bold shadow-lg hover:shadow-xl transition-all duration-300 py-6 text-lg" asChild>
+                    <Link href="/signup">Start Free Trial</Link>
+                  </Button>
                   </CardFooter>
                 </Card>
 
@@ -666,22 +708,22 @@ export default function LandingPage() {
                 Start your 7-day free trial today. No credit card required. Setup in minutes.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                <SignedOut>
-                  <SignUpButton>
-                    <Button size="lg" className="bg-black hover:bg-gray-900 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-black font-bold shadow-2xl hover:shadow-3xl transition-all duration-300 hover:scale-105 px-10 py-7 text-lg group">
+                {!authLoading && !user && (
+                  <Button size="lg" className="bg-black hover:bg-gray-900 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-black font-bold shadow-2xl hover:shadow-3xl transition-all duration-300 hover:scale-105 px-10 py-7 text-lg group" asChild>
+                    <Link href="/signup">
                       Start Free Trial
                       <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                    </Button>
-                  </SignUpButton>
-                </SignedOut>
-                <SignedIn>
-                  <Link href="/dashboard">
-                    <Button size="lg" className="bg-black hover:bg-gray-900 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-black font-bold shadow-2xl hover:shadow-3xl transition-all duration-300 hover:scale-105 px-10 py-7 text-lg group">
+                    </Link>
+                  </Button>
+                )}
+                {!authLoading && user && (
+                  <Button size="lg" className="bg-black hover:bg-gray-900 dark:bg-white dark:hover:bg-gray-100 text-white dark:text-black font-bold shadow-2xl hover:shadow-3xl transition-all duration-300 hover:scale-105 px-10 py-7 text-lg group" asChild>
+                    <Link href="/dashboard">
                       Go to Dashboard
                       <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                    </Button>
-                  </Link>
-                </SignedIn>
+                    </Link>
+                  </Button>
+                )}
                 <Button size="lg" variant="outline" className="border-2 border-black dark:border-white hover:bg-black/10 dark:hover:bg-white/10 text-black dark:text-white transition-all duration-300 font-bold px-10 py-7 text-lg">
                   Contact Sales
                 </Button>

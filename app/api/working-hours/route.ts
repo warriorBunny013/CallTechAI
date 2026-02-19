@@ -1,23 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
 
 // GET: Get working hours configuration for current user
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
+    const supabase = await createClient()
     const { data: workingHours, error } = await supabase
       .from('working_hours')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', userAndOrg.userId)
       .single()
 
     if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
@@ -49,9 +49,8 @@ export async function GET(request: NextRequest) {
 // POST/PUT: Create or update working hours configuration
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -90,7 +89,7 @@ export async function POST(request: NextRequest) {
     const { data: workingHours, error } = await supabase
       .from('working_hours')
       .upsert({
-        user_id: userId,
+        user_id: userAndOrg.userId,
         is_enabled: is_enabled ?? false,
         timezone: timezone || 'America/New_York',
         monday_enabled: monday_enabled ?? false,

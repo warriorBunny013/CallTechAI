@@ -1,39 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
+import { syncOrgIntentsToVapi } from '@/lib/vapi-update-assistant'
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     const { intent_name, example_user_phrases, english_responses, russian_responses } = body
 
-    // Validate required fields
-    if (!intent_name || !example_user_phrases || !english_responses || !russian_responses) {
+    // Validate required fields (russian_responses optional, defaults to [])
+    if (!intent_name || !example_user_phrases || !english_responses) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       )
     }
 
-    // First verify the intent belongs to the user
+    const supabase = await createClient()
     const { data: existingIntent, error: checkError } = await supabase
       .from('intents')
       .select('id')
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .single()
 
     if (checkError || !existingIntent) {
@@ -49,10 +49,10 @@ export async function PUT(
         intent_name,
         example_user_phrases,
         english_responses,
-        russian_responses,
+        russian_responses: russian_responses ?? [],
       })
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .select()
       .single()
 
@@ -71,6 +71,8 @@ export async function PUT(
       )
     }
 
+    await syncOrgIntentsToVapi(userAndOrg.organisationId, supabase)
+
     return NextResponse.json({ intent })
   } catch (error) {
     console.error('API error:', error)
@@ -83,26 +85,25 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const { id } = params
+    const { id } = await params
 
-    // First verify the intent belongs to the user
+    const supabase = await createClient()
     const { data: existingIntent, error: checkError } = await supabase
       .from('intents')
       .select('id')
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .single()
 
     if (checkError || !existingIntent) {
@@ -116,7 +117,7 @@ export async function DELETE(
       .from('intents')
       .delete()
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
 
     if (error) {
       console.error('Supabase error:', error)
@@ -125,6 +126,8 @@ export async function DELETE(
         { status: 500 }
       )
     }
+
+    await syncOrgIntentsToVapi(userAndOrg.organisationId, supabase)
 
     return NextResponse.json({ message: 'Intent deleted successfully' })
   } catch (error) {

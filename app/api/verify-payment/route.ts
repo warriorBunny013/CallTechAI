@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
 import { supabase } from "@/lib/supabase";
-import { auth } from "@clerk/nextjs/server";
+import { getCurrentUser } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId } = await auth();
+    const user = await getCurrentUser();
 
-    if (!userId) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         .from("subscriptions")
         .upsert(
           {
-            user_id: userId,
+            user_id: user.id,
             stripe_customer_id: session.customer as string,
             stripe_subscription_id: subscription.id,
             status: subscription.status,

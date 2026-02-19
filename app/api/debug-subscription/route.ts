@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { auth } from "@clerk/nextjs/server";
+import { getCurrentUser } from "@/lib/auth";
 
 export async function GET() {
   try {
-    const { userId } = await auth();
+    const user = await getCurrentUser();
 
-    if (!userId) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { data: subscription, error } = await supabase
       .from("subscriptions")
       .select("*")
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .single();
 
     if (error && error.code !== "PGRST116") {
@@ -25,7 +25,7 @@ export async function GET() {
     }
 
     return NextResponse.json({
-      userId,
+      userId: user.id,
       subscription,
       hasSubscription: !!subscription,
       subscriptionStatus: subscription?.status,

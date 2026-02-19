@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
 
 // POST: Launch assistant (link phone number to assistant for inbound calls)
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
+
+    const supabase = await createClient()
 
     const body = await request.json()
     const { phoneNumberId, assistantId } = body
@@ -24,12 +25,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify phone number belongs to user
+    // Verify phone number belongs to org
     const { data: phoneNumber, error: phoneError } = await supabase
       .from('phone_numbers')
       .select('*')
       .eq('id', phoneNumberId)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .single()
 
     if (phoneError || !phoneNumber) {
@@ -39,12 +40,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify assistant belongs to user
+    // Verify assistant belongs to org
     const { data: assistant, error: assistantError } = await supabase
       .from('assistants')
       .select('*')
       .eq('id', assistantId)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .single()
 
     if (assistantError || !assistant) {
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
         is_active: true
       })
       .eq('id', phoneNumberId)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .select()
       .single()
 

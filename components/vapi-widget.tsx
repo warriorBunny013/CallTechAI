@@ -6,20 +6,33 @@ import { Badge } from '@/components/ui/badge'
 import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX } from 'lucide-react'
 import { getVapi } from '@/lib/vapi'
 
+/** Transient assistant config (CallTechAI intents + voice) - overrides assistantId when provided */
+export interface AssistantConfig {
+  name: string
+  firstMessage: string
+  model: { provider: string; model: string; temperature: number; messages: { role: string; content: string }[] }
+  voice: { provider: string; voiceId: string }
+}
+
 interface VapiWidgetProps {
   apiKey: string
-  assistantId: string
+  assistantId?: string
+  /** When set, uses CallTechAI dashboard intents + selected voice instead of VAPI.ai assistant */
+  assistantConfig?: AssistantConfig | null
   config?: Record<string, unknown>
   className?: string
-  onStartCall?: () => Promise<void>
+  onStartCall?: () => Promise<string | void>
+  inline?: boolean
 }
 
 const VapiWidget: React.FC<VapiWidgetProps> = ({ 
   apiKey, 
-  assistantId, 
+  assistantId = "", 
+  assistantConfig = null,
   config = {},
   className = "",
-  onStartCall
+  onStartCall,
+  inline = false
 }) => {
   const [vapi, setVapi] = useState<any>(null)
   const [isConnected, setIsConnected] = useState(false)
@@ -85,7 +98,7 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
     if (apiKey) {
       initializeVapi()
     }
-  }, [apiKey, assistantId])
+  }, [apiKey, assistantId, assistantConfig])
 
   const startCall = async () => {
     try {
@@ -97,13 +110,27 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
         return
       }
       
+      // Prefer CallTechAI dashboard intents + voice (assistantConfig) over VAPI assistant ID
+      if (assistantConfig && Object.keys(assistantConfig).length > 0) {
+        console.log('Starting call with CallTechAI assistant config (dashboard intents + voice)')
+        await vapi.start(assistantConfig as Parameters<typeof vapi.start>[0])
+        return
+      }
+      
       if (!assistantId) {
-        console.log('No assistant ID, calling onStartCall')
+        console.log('No assistant ID or config, calling onStartCall')
         if (onStartCall) {
-          await onStartCall()
+          const result = await onStartCall()
+          if (result && vapi) {
+            if (typeof result === 'string') {
+              await vapi.start(result)
+            } else if (typeof result === 'object' && result !== null) {
+              await vapi.start(result as Parameters<typeof vapi.start>[0])
+            }
+          }
           return
         } else {
-          setError("Assistant not created yet. Please wait for assistant creation.")
+          setError("Assistant not configured. Add intents and select a voice in the dashboard.")
           return
         }
       }
@@ -140,8 +167,15 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
     return null
   }
 
+  const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    if (inline) {
+      return <div className={className}>{children}</div>
+    }
+    return <div className={`fixed bottom-6 right-6 z-50 font-sans ${className}`}>{children}</div>
+  }
+
   return (
-    <div className={`fixed bottom-6 right-6 z-50 font-sans ${className}`}>
+    <Wrapper>
       {!isConnected ? (
         <Button
           onClick={startCall}
@@ -149,7 +183,7 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
           disabled={!vapi}
         >
           <Mic className="mr-2 h-5 w-5" />
-          Talk to Assistant
+          Start Voice Demo
         </Button>
       ) : (
         <div className="bg-white dark:bg-gray-800 rounded-xl p-5 w-80 shadow-2xl border border-gray-200 dark:border-gray-700">
@@ -222,7 +256,7 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
           )}
         </div>
       )}
-    </div>
+    </Wrapper>
   )
 }
 
