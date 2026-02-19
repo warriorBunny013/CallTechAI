@@ -7,6 +7,7 @@ export interface CallLog {
   date: string
   time: string
   duration: string
+  durationSeconds?: number
   status: string
   recordingUrl: string | null
   analysis: string

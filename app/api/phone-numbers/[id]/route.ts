@@ -1,32 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
 
-// PUT: Update phone number (mainly to set assistant for inbound calls)
+// PUT: Update phone number (e.g. set Vapi assistant for inbound; we use transient assistant per call)
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     const { assistantId, vapiAssistantId } = body
 
-    // Verify phone number belongs to user
+    const supabase = await createClient()
     const { data: existingPhone, error: checkError } = await supabase
       .from('phone_numbers')
       .select('*')
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .single()
 
     if (checkError || !existingPhone) {
@@ -36,49 +35,28 @@ export async function PUT(
       )
     }
 
-    // Update phone number in VAPI if assistant is being set
+    // Update phone number in VAPI if assistant is being set (path: /phone-number/:id, not /v1/...)
     if (vapiAssistantId) {
       const vapiApiKey = process.env.VAPI_API_KEY
       if (vapiApiKey && vapiApiKey !== 'your_vapi_api_key_here') {
         try {
-          const https = require('https')
-          const options = {
-            hostname: 'api.vapi.ai',
-            port: 443,
-            path: `/v1/phone-numbers/${existingPhone.vapi_phone_number_id}`,
-            method: 'PATCH',
-            headers: {
-              'Authorization': `Bearer ${vapiApiKey}`,
-              'Content-Type': 'application/json'
+          const res = await fetch(
+            `https://api.vapi.ai/phone-number/${encodeURIComponent(existingPhone.vapi_phone_number_id)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${vapiApiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ assistantId: vapiAssistantId }),
             }
+          )
+          if (!res.ok) {
+            const errText = await res.text()
+            console.error('VAPI update error:', res.status, errText)
           }
-
-          await new Promise((resolve, reject) => {
-            const req = https.request(options, (res: any) => {
-              let data = ''
-              res.on('data', (chunk: any) => data += chunk)
-              res.on('end', () => {
-                try {
-                  if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-                    resolve(JSON.parse(data))
-                  } else {
-                    reject(new Error('Failed to update phone number in VAPI'))
-                  }
-                } catch (parseError) {
-                  reject(new Error('Failed to parse response'))
-                }
-              })
-            })
-            
-            req.on('error', reject)
-            req.write(JSON.stringify({
-              assistantId: vapiAssistantId
-            }))
-            req.end()
-          })
         } catch (vapiError) {
           console.error('VAPI update error:', vapiError)
-          // Continue with database update even if VAPI fails
         }
       }
     }
@@ -92,7 +70,7 @@ export async function PUT(
       .from('phone_numbers')
       .update(updateData)
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .select()
       .single()
 
@@ -117,26 +95,25 @@ export async function PUT(
 // DELETE: Delete phone number
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    const { id } = params
+    const { id } = await params
 
-    // Verify phone number belongs to user
+    const supabase = await createClient()
     const { data: existingPhone, error: checkError } = await supabase
       .from('phone_numbers')
       .select('vapi_phone_number_id')
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .single()
 
     if (checkError || !existingPhone) {
@@ -149,12 +126,11 @@ export async function DELETE(
     // Delete from VAPI (optional - you might want to keep the number)
     // For now, we'll just delete from our database
 
-    // Delete from database
     const { error } = await supabase
       .from('phone_numbers')
       .delete()
       .eq('id', id)
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
 
     if (error) {
       console.error('Supabase error:', error)

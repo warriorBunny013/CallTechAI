@@ -4,8 +4,10 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Loader2 } from "lucide-react"
-import VapiWidget from "@/components/vapi-widget"
+import Link from "next/link"
+import VapiWidget, { type AssistantConfig } from "@/components/vapi-widget"
 import { Intent } from "@/lib/supabase"
+import { getVapiAssistantById } from "@/lib/vapi-assistants"
 
 export default function DemoPage() {
   const [intents, setIntents] = useState<Intent[]>([])
@@ -14,6 +16,9 @@ export default function DemoPage() {
   const [apiKeyStatus, setApiKeyStatus] = useState<string>("")
   const [assistantId, setAssistantId] = useState<string>("")
   const [isCreatingAssistant, setIsCreatingAssistant] = useState(false)
+  const [selectedVoiceAgentId, setSelectedVoiceAgentId] = useState<string | null>(null)
+  /** CallTechAI dashboard intents + selected voice — used so the assistant uses your intents, not VAPI.ai content */
+  const [assistantConfig, setAssistantConfig] = useState<AssistantConfig | null>(null)
 
   // Check API key status
   useEffect(() => {
@@ -24,6 +29,44 @@ export default function DemoPage() {
       setApiKeyStatus("✅ Vapi API key configured")
     }
   }, [])
+
+  // Fetch organisation's selected voice agent (from Assistants page)
+  useEffect(() => {
+    const fetchOrganisation = async () => {
+      try {
+        const res = await fetch('/api/organisation')
+        if (res.ok) {
+          const data = await res.json()
+          setSelectedVoiceAgentId(data.organisation?.selected_voice_agent_id ?? null)
+        }
+      } catch (e) {
+        console.error('Error fetching organisation:', e)
+      }
+    }
+    fetchOrganisation()
+  }, [])
+
+  // Fetch transient assistant config (dashboard intents + selected voice) so the demo uses CallTechAI intents
+  useEffect(() => {
+    const fetchAssistantConfig = async () => {
+      try {
+        const res = await fetch('/api/assistant-config')
+        if (res.ok) {
+          const data = await res.json()
+          setAssistantConfig(data.assistantConfig ?? null)
+        } else {
+          setAssistantConfig(null)
+        }
+      } catch (e) {
+        console.error('Error fetching assistant config:', e)
+        setAssistantConfig(null)
+      }
+    }
+    fetchAssistantConfig()
+  }, [intents.length, selectedVoiceAgentId])
+
+  // Use organisation's selected assistant when available, else locally created one (for display only)
+  const effectiveAssistantId = selectedVoiceAgentId || assistantId
 
   // Fetch intents from Supabase
   useEffect(() => {
@@ -79,19 +122,18 @@ export default function DemoPage() {
   }
 
   const handleStartCall = async () => {
-    console.log('handleStartCall called, assistantId:', assistantId)
-    if (!assistantId) {
-      console.log('Creating assistant...')
-      try {
-        await createAssistant()
-        console.log('Assistant created successfully')
-      } catch (error) {
-        console.error('Error creating assistant:', error)
-        // Error already set in createAssistant
-        return
-      }
-    } else {
-      console.log('Assistant already exists:', assistantId)
+    if (assistantConfig) {
+      return assistantConfig
+    }
+    if (effectiveAssistantId) {
+      return effectiveAssistantId
+    }
+    try {
+      const newId = await createAssistant()
+      return newId ?? undefined
+    } catch (error) {
+      console.error('Error creating assistant:', error)
+      return
     }
   }
 
@@ -144,18 +186,35 @@ export default function DemoPage() {
         <CardHeader>
           <CardTitle>Assistant Status</CardTitle>
         </CardHeader>
-        <CardContent>
+            <CardContent>
           <div className="space-y-2">
-            {assistantId ? (
-              <div className="flex items-center space-x-2">
-                <Badge variant="default">✅ Assistant Created</Badge>
-                <span className="text-sm text-muted-foreground">ID: {assistantId}</span>
+            {assistantConfig ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center space-x-2 flex-wrap gap-2">
+                  <Badge variant="default">✅ Using CallTechAI intents</Badge>
+                  <span className="text-sm text-muted-foreground">
+                    Voice: {assistantConfig.name} — answers from your dashboard intents ({intents.length} intents)
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  The assistant uses your saved intents from the dashboard, not VAPI.ai content.
+                </p>
+              </div>
+            ) : effectiveAssistantId ? (
+              <div className="flex items-center space-x-2 flex-wrap gap-2">
+                <Badge variant="secondary">Assistant selected</Badge>
+                <span className="text-sm text-muted-foreground">
+                  {getVapiAssistantById(effectiveAssistantId)?.name ?? 'Custom'} — select a voice in Assistants and add intents to use your content
+                </span>
               </div>
             ) : (
-              <div className="flex items-center space-x-2">
-                <Badge variant="secondary">⏳ No Assistant</Badge>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center space-x-2">
+                  <Badge variant="secondary">No assistant selected</Badge>
+                </div>
                 <span className="text-sm text-muted-foreground">
-                  Assistant will be created when you start your first call
+                  Select a voice in <Link href="/dashboard/assistants" className="underline text-primary">Assistants</Link> and add{' '}
+                  <Link href="/dashboard/intents" className="underline text-primary">intents</Link> so the demo uses your CallTechAI content.
                 </span>
               </div>
             )}
@@ -253,20 +312,36 @@ export default function DemoPage() {
         </CardContent>
       </Card>
 
-      {/* Vapi Widget */}
-      {apiKeyStatus.includes("configured") && intents.length > 0 && (
+      {/* Voice demo (inline) — uses CallTechAI dashboard intents + selected voice */}
+      {apiKeyStatus.includes("configured") && (
         <>
-          <div className="text-sm text-muted-foreground mb-2">
-            Debug: API Key configured: {apiKeyStatus.includes("configured") ? "Yes" : "No"}, 
-            Intents count: {intents.length}, 
-            Assistant ID: {assistantId || "None"}
-          </div>
-          <VapiWidget
-            apiKey={process.env.NEXT_PUBLIC_VAPI_API_KEY!}
-            assistantId={assistantId}
-            config={{}}
-            onStartCall={handleStartCall}
-          />
+          <Card>
+            <CardHeader>
+              <CardTitle>Voice Demo</CardTitle>
+              <CardDescription>
+                Click start, allow microphone access, then speak. The assistant uses your CallTechAI dashboard intents and selected voice (not VAPI.ai content).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!assistantConfig && (
+                <div className="text-xs text-muted-foreground">
+                  Select a voice in <Link href="/dashboard/assistants" className="underline">Assistants</Link> and add <Link href="/dashboard/intents" className="underline">intents</Link> so the demo uses your content.
+                </div>
+              )}
+              <VapiWidget
+                apiKey={process.env.NEXT_PUBLIC_VAPI_API_KEY!}
+                assistantId={effectiveAssistantId}
+                assistantConfig={assistantConfig}
+                config={{}}
+                onStartCall={handleStartCall}
+                inline
+                className="flex items-center"
+              />
+              <div className="text-xs text-muted-foreground">
+                Tip: If you don’t hear audio, check your browser microphone permissions and output device.
+              </div>
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

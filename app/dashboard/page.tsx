@@ -2,27 +2,44 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { ArrowRight, Phone, MessageSquare, Clock, Play, Loader2, RefreshCw } from "lucide-react"
+import { Phone, MessageSquare, Clock, Play, Loader2, RefreshCw } from "lucide-react"
 import Link from "next/link"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { useState, useEffect, Suspense } from "react"
 import { useDashboardStats } from "@/hooks/use-dashboard-stats"
-import { useAssistantStatus } from "@/hooks/use-assistant-status"
+import { useCallLogs } from "@/hooks/use-call-logs"
 import { useSubscription } from "@/hooks/use-subscription"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { useSearchParams } from "next/navigation"
 import { SetupWizard } from "@/components/setup-wizard"
 
+function formatDuration(seconds: number): string {
+  if (!seconds) return "0m 0s"
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return m === 0 ? `${s}s` : `${m}m ${String(s).padStart(2, "0")}s`
+}
+
 function DashboardContent() {
   const { stats, loading, error, refetch } = useDashboardStats()
-  const { status, loading: statusLoading, error: statusError, updateStatus } = useAssistantStatus()
+  const { calls, loading: callsLoading, refreshCallLogs } = useCallLogs()
   const { hasActiveSubscription, subscription } = useSubscription()
   const searchParams = useSearchParams()
   const [showSuccessMessage, setShowSuccessMessage] = useState(false)
   const [showWizard, setShowWizard] = useState(true)
+
+  const totalCalls = calls.length
+  const callsWithDuration = calls.filter((c) => (c.durationSeconds ?? 0) > 0)
+  const totalSeconds = callsWithDuration.reduce((sum, c) => sum + (c.durationSeconds ?? 0), 0)
+  const avgDurationSeconds = callsWithDuration.length > 0 ? Math.floor(totalSeconds / callsWithDuration.length) : 0
+  const avgDuration = formatDuration(avgDurationSeconds)
+  const recentCalls = calls.slice(0, 5)
+
+  const handleRefresh = () => {
+    refetch()
+    refreshCallLogs()
+  }
 
   // Show success message if we just completed payment verification
   useEffect(() => {
@@ -33,7 +50,6 @@ function DashboardContent() {
         title: "Payment Successful!",
         description: "Your subscription has been activated successfully.",
       })
-      // Clear the success message after showing it
       const timer = setTimeout(() => setShowSuccessMessage(false), 5000)
       return () => clearTimeout(timer)
     }
@@ -68,51 +84,13 @@ function DashboardContent() {
           <Button
             variant="outline"
             size="sm"
-            onClick={refetch}
-            disabled={loading}
+            onClick={handleRefresh}
+            disabled={loading || callsLoading}
             className="mr-2"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading || callsLoading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <div className="flex items-center space-x-2">
-            <Switch 
-              id="assistant-status" 
-              checked={status.isActive} 
-              onCheckedChange={async (checked) => {
-                try {
-                  await updateStatus(checked)
-                  toast({
-                    title: `Assistant ${checked ? 'Activated' : 'Deactivated'}`,
-                    description: `Your AI voice assistant is now ${checked ? 'active and ready to answer calls' : 'inactive and will not answer calls'}.`,
-                  })
-                } catch (error) {
-                  console.error('Failed to update assistant status:', error)
-                  toast({
-                    title: "Error",
-                    description: "Failed to update assistant status. Please try again.",
-                    variant: "destructive",
-                  })
-                }
-              }}
-              disabled={statusLoading}
-            />
-            {statusLoading && (
-              <Loader2 className="h-4 w-4 animate-spin ml-2" />
-            )}
-            <Label htmlFor="assistant-status">Assistant Active</Label>
-          </div>
-          {statusLoading ? (
-            <div className="ml-2 h-6 w-16 bg-muted animate-pulse rounded"></div>
-          ) : status.isActive ? (
-            <Badge variant="outline" className="ml-2 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100">
-              Online
-            </Badge>
-          ) : (
-            <Badge variant="outline" className="ml-2 bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100">
-              Offline
-            </Badge>
-          )}
         </div>
       </div>
 
@@ -123,16 +101,16 @@ function DashboardContent() {
             <Phone className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {loading ? (
+            {callsLoading ? (
               <div className="space-y-2">
                 <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
                 <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
               </div>
             ) : (
               <>
-                <div className="text-2xl font-bold">{stats.totalCalls}</div>
+                <div className="text-2xl font-bold">{totalCalls}</div>
                 <p className="text-xs text-muted-foreground">
-                  {error ? 'Error loading data' : 'Live data from VAPI'}
+                  {error ? 'Error loading data' : 'From call recordings'}
                 </p>
               </>
             )}
@@ -144,16 +122,16 @@ function DashboardContent() {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {loading ? (
+            {callsLoading ? (
               <div className="space-y-2">
                 <div className="h-8 w-16 bg-muted animate-pulse rounded"></div>
                 <div className="h-3 w-24 bg-muted animate-pulse rounded"></div>
               </div>
             ) : (
               <>
-                <div className="text-2xl font-bold">{stats.avgDuration}</div>
+                <div className="text-2xl font-bold">{avgDuration}</div>
                 <p className="text-xs text-muted-foreground">
-                  {error ? 'Error loading data' : 'Live data from VAPI'}
+                  {error ? 'Error loading data' : 'From call recordings'}
                 </p>
               </>
             )}
@@ -174,7 +152,7 @@ function DashboardContent() {
               <>
                 <div className="text-2xl font-bold">{stats.intentsCount}</div>
                 <p className="text-xs text-muted-foreground">
-                  {error ? 'Error loading data' : 'Live data from Supabase'}
+                  {error ? 'Error loading data' : 'Live data'}
                 </p>
               </>
             )}
@@ -195,7 +173,7 @@ function DashboardContent() {
               <>
                 <div className="text-2xl font-bold">{stats.assistantActive ? 'Active' : 'Inactive'}</div>
                 <p className="text-xs text-muted-foreground">
-                  {stats.assistantActive ? 'Ready to answer calls' : 'Not answering calls'}
+                  {stats.assistantActive ? 'Ready to answer calls' : 'Complete Add Phone Number, Create Intents & Choose Assistant'}
                 </p>
               </>
             )}
@@ -221,7 +199,7 @@ function DashboardContent() {
         {showWizard ? (
           <SetupWizard onComplete={() => {
             setShowWizard(false)
-            refetch()
+            handleRefresh()
           }} />
         ) : (
           <Card>
@@ -253,9 +231,8 @@ function DashboardContent() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {loading ? (
-                // Loading skeleton for recent calls
-                Array.from({ length: 4 }).map((_, index) => (
+              {callsLoading ? (
+                Array.from({ length: 5 }).map((_, index) => (
                   <div key={index} className="flex items-center justify-between">
                     <div className="space-y-2">
                       <div className="h-4 w-24 bg-muted animate-pulse rounded"></div>
@@ -267,8 +244,8 @@ function DashboardContent() {
                     </div>
                   </div>
                 ))
-              ) : stats.recentCalls.length > 0 ? (
-                stats.recentCalls.map((call, index) => (
+              ) : recentCalls.length > 0 ? (
+                recentCalls.map((call, index) => (
                   <div key={call.id || index} className="flex items-center justify-between">
                     <div className="space-y-1">
                       <p className="font-medium">
@@ -279,15 +256,19 @@ function DashboardContent() {
                     <div className="flex items-center space-x-2">
                       <span className="text-sm">{call.duration}</span>
                       <div className={`px-2 py-1 rounded-full text-xs ${
-                        call.status === 'completed' 
-                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100' 
+                        call.status === 'pass' || call.status === 'completed'
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100'
                           : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100'
                       }`}>
-                        {call.status === 'completed' ? '✓' : '✗'}
+                        {call.status === 'pass' || call.status === 'completed' ? '✓' : '✗'}
                       </div>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-lime-50 dark:hover:bg-lime-950/20">
-                        <Play className="h-4 w-4 text-lime-500" />
-                      </Button>
+                      {call.recordingUrl && (
+                        <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-lime-50 dark:hover:bg-lime-950/20" asChild>
+                          <Link href={call.recordingUrl} target="_blank" rel="noopener noreferrer">
+                            <Play className="h-4 w-4 text-lime-500" />
+                          </Link>
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -303,11 +284,9 @@ function DashboardContent() {
                 </div>
               )}
             </div>
-                          <Button variant="outline" className="mt-4 w-full" asChild>
-                <Link href="/dashboard/recordings" className="flex w-full items-center justify-center">
-                  View All Calls
-                </Link>
-              </Button>
+            <Link href="/dashboard/recordings" className="block mt-4 text-center text-sm text-lime-600 dark:text-lime-400 hover:underline">
+              View all
+            </Link>
           </CardContent>
         </Card>
       </div>

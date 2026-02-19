@@ -148,7 +148,7 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
       return;
     }
 
-    const userId = (customer as any).metadata?.userId || (customer as any).metadata?.clerkUserId;
+    const userId = (customer as any).metadata?.userId;
     
     if (!userId) {
       console.error("No userId found in customer metadata for subscription:", subscription.id);
