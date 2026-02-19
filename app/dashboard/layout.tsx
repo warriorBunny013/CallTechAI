@@ -33,8 +33,15 @@ import {
   Bot,
   Clock,
 } from "lucide-react";
-import { SignedIn, SignOutButton, UserButton } from "@clerk/nextjs";
 import { useSubscription } from "@/hooks/use-subscription";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { LogOut } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -42,6 +49,40 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+function UserMenu() {
+  const router = useRouter();
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/");
+    router.refresh();
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="rounded-full">
+          <Avatar className="h-8 w-8">
+            <AvatarFallback className="bg-lime-500/20 text-lime-600 dark:text-lime-400 text-sm">U</AvatarFallback>
+          </Avatar>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
+          <LogOut className="mr-2 h-4 w-4" />
+          Log out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function DashboardLayoutContent({
   children,
@@ -63,7 +104,7 @@ function DashboardLayoutContent({
   const [verificationAttempted, setVerificationAttempted] = useState(false);
   const [paymentJustCompleted, setPaymentJustCompleted] = useState(false);
   const [overrideSubscriptionCheck, setOverrideSubscriptionCheck] = useState(false);
-  const { hasActiveSubscription, loading: subscriptionLoading, refetch } =
+  const { canAccess, hasActiveSubscription, loading: subscriptionLoading, refetch } =
     useSubscription();
 
   // Prevent hydration errors
@@ -234,63 +275,45 @@ function DashboardLayoutContent({
     );
   }
 
-  // Check if we have a session_id (user just completed payment)
-  const hasSessionId = searchParams.get('session_id');
-  
-  // If no active subscription and not on pricing page, show pricing
-  // BUT allow access if we're currently verifying payment OR have a session_id OR payment just completed OR override is set
-  if (!hasActiveSubscription && pathname !== "/dashboard/pricing" && !isVerifyingPayment && !hasSessionId && !paymentJustCompleted && !overrideSubscriptionCheck) {
-    return (
-      <SignedIn>
-        <div className="min-h-screen bg-background">
-          <header className="border-b">
-            <div className="flex h-16 items-center gap-4 px-6">
-              <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-6 w-6 text-lime-500"
-                >
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                  <line x1="12" x2="12" y1="19" y2="22" />
-                </svg>
-                <span className="text-xl font-bold bg-gradient-to-r from-lime-500 to-lime-600 bg-clip-text text-transparent">CallTechAI</span>
-              </Link>
-              <div className="flex-1" />
-              <ModeToggle />
-              <UserButton />
-            </div>
-          </header>
-          <main className="container mx-auto py-8">
-            <Card className="max-w-md mx-auto">
-              <CardHeader className="text-center">
-                <CardTitle>Subscription Required</CardTitle>
-                <CardDescription>
-                  Please subscribe to access the dashboard features
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="text-center">
-                <Button asChild className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200">
-                  <Link href="/dashboard/pricing">View Pricing Plans</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </main>
-        </div>
-      </SignedIn>
-    );
-  }
+  // Only block access when trial AND subscription have ended (not on pricing page or demo)
+  const hasSessionId = searchParams.get("session_id");
+  const showPaymentPopup =
+    !canAccess &&
+    pathname !== "/dashboard/pricing" &&
+    pathname !== "/demo" &&
+    !pathname.startsWith("/demo/") &&
+    !isVerifyingPayment &&
+    !hasSessionId &&
+    !paymentJustCompleted &&
+    !overrideSubscriptionCheck;
 
-  // Show full dashboard for subscribed users
   return (
-    <SignedIn>
-      <SidebarProvider>
+      <>
+        {/* Payment popup: only after trial AND subscription have ended */}
+        <Dialog open={showPaymentPopup} onOpenChange={() => {}}>
+          <DialogContent
+            className="sm:max-w-md"
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onEscapeKeyDown={(e) => e.preventDefault()}
+          >
+            <DialogHeader>
+              <DialogTitle>Trial ended — Subscribe to continue</DialogTitle>
+              <DialogDescription>
+                Your 7-day free trial has ended. Choose a monthly or annual plan to keep using CallTechAI.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button asChild className="w-full sm:w-auto bg-lime-500 hover:bg-lime-600 text-black font-semibold">
+                <Link href="/dashboard/pricing">View pricing (monthly or annual)</Link>
+              </Button>
+              <Button variant="outline" asChild className="w-full sm:w-auto">
+                <Link href="/">Leave dashboard</Link>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <SidebarProvider>
         <div className="flex min-h-screen w-full">
           <Sidebar className="w-56">
             <SidebarHeader className="flex flex-col items-center justify-center px-1 py-4">
@@ -384,7 +407,7 @@ function DashboardLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/analytics"}
@@ -413,8 +436,8 @@ function DashboardLayoutContent({
                       </Badge>
                     </Link>
                   </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
+                </SidebarMenuItem> */}
+                {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/working-hours"}
@@ -424,8 +447,8 @@ function DashboardLayoutContent({
                       <span>Working Hours</span>
                     </Link>
                   </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
+                </SidebarMenuItem> */}
+                {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/advanced"}
@@ -438,7 +461,7 @@ function DashboardLayoutContent({
                       </Badge>
                     </Link>
                   </SidebarMenuButton>
-                </SidebarMenuItem>
+                </SidebarMenuItem> */}
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/demo"}>
                     <Link href="/demo">
@@ -474,29 +497,12 @@ function DashboardLayoutContent({
                   </SidebarMenuButton>
                 </SidebarMenuItem> */}
                 <SidebarMenuItem>
-                  <SignOutButton>
-                    <SidebarMenuButton asChild>
-                      <button>
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="24"
-                          height="24"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="h-4 w-4"
-                        >
-                          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                          <polyline points="16,17 21,12 16,7" />
-                          <line x1="21" x2="9" y1="12" y2="12" />
-                        </svg>
-                        <span>Logout</span>
-                      </button>
-                    </SidebarMenuButton>
-                  </SignOutButton>
+                  <SidebarMenuButton asChild>
+                    <button type="button" onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/"; }}>
+                      <LogOut className="h-4 w-4" />
+                      <span>Logout</span>
+                    </button>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarFooter>
@@ -506,13 +512,13 @@ function DashboardLayoutContent({
               <SidebarTrigger />
               <div className="flex-1" />
               <ModeToggle />
-              <UserButton />
+              <UserMenu />
             </header>
             <main className="flex-1 w-full p-6">{children}</main>
           </div>
         </div>
       </SidebarProvider>
-    </SignedIn>
+      </>
   );
 }
 

@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -37,92 +36,26 @@ export async function GET(request: NextRequest) {
         startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
     }
 
-    // Fetch calls from VAPI
-    const vapiApiKey = process.env.VAPI_API_KEY || process.env.NEXT_PUBLIC_VAPI_API_KEY
-    let calls: any[] = []
-    
-    if (vapiApiKey && vapiApiKey !== 'your_vapi_api_key_here') {
-      try {
-        const https = require('https')
-        
-        // Try different possible Vapi API endpoints for calls
-        const endpoints = ['/call', '/calls', '/v1/call', '/v1/calls']
-        let lastError = null
-        
-        for (const endpoint of endpoints) {
-          try {
-            console.log(`Trying endpoint: ${endpoint}`)
-            const options = {
-              hostname: 'api.vapi.ai',
-              port: 443,
-              path: endpoint,
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${vapiApiKey}`,
-                'Content-Type': 'application/json'
-              }
-            }
-            
-            const response = await new Promise<{ status: number; data: any }>((resolve, reject) => {
-              const req = https.request(options, (res: any) => {
-                let data = ''
-                res.on('data', (chunk: any) => data += chunk)
-                res.on('end', () => {
-                  try {
-                    const jsonData = JSON.parse(data)
-                    resolve({ status: res.statusCode || 0, data: jsonData })
-                  } catch (parseError) {
-                    reject(new Error('Failed to parse response'))
-                  }
-                })
-              })
-              
-              req.on('error', reject)
-              req.end()
-            })
-            
-            if (response.status >= 200 && response.status < 300) {
-              calls = response.data?.data || response.data?.calls || response.data || []
-              console.log(`Success with endpoint ${endpoint}: Got ${calls.length} calls`)
-              console.log('Response data structure:', Object.keys(response.data || {}))
-              console.log('Sample call data:', calls[0])
-              break
-            } else {
-              console.log(`Endpoint ${endpoint} failed with status: ${response.status}`)
-              lastError = new Error(`HTTP request failed: ${response.status}`)
-            }
-          } catch (endpointError) {
-            console.log(`Endpoint ${endpoint} error:`, endpointError)
-            lastError = endpointError
-          }
-        }
-        
-        if (calls.length === 0) {
-          console.log('No calls fetched from Vapi API, using fallback data')
-          calls = generateSampleCalls(startDate, now, timeRange)
-        } else {
-          console.log(`Successfully fetched ${calls.length} calls from Vapi AI`)
-        }
-      } catch (vapiError) {
-        console.error('Error fetching calls from Vapi:', vapiError)
-        // Continue with empty calls array
-      }
-    }
+    // Fetch calls from Supabase (organisation-scoped)
+    const supabase = await createClient()
+    const { data: callsRows } = await supabase
+      .from('calls')
+      .select('id, call_status, duration_seconds, started_at, created_at, analysis')
+      .eq('organisation_id', userAndOrg.organisationId)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', now.toISOString())
+      .order('created_at', { ascending: false })
 
-    // Filter calls by date range
-    const filteredCalls = calls.filter((call: any) => {
-      const callDate = new Date(call.createdAt || call.created_at || call.startTime || call.start || 0)
-      
-      // Debug date filtering
-      console.log(`Call ${call.id}: callDate=${callDate.toISOString()}, startDate=${startDate.toISOString()}, now=${now.toISOString()}`)
-      
-      // Handle cases where call dates might be in the future or have incorrect parsing
-      // For now, include all calls regardless of date to see if we can get metrics working
-      return true
-      
-      // Original filtering logic (commented out for debugging)
-      // return callDate >= startDate && callDate <= now
-    })
+    const filteredCalls = (callsRows ?? []).map((row: Record<string, unknown>) => ({
+      id: row.id,
+      status: row.call_status === 'completed' || row.call_status === 'success' ? 'pass' : 'fail',
+      duration: row.duration_seconds,
+      createdAt: row.started_at ?? row.created_at,
+      created_at: row.created_at,
+      startTime: row.started_at,
+      start: row.started_at,
+      analysis: row.analysis,
+    }))
 
     console.log(`Filtered to ${filteredCalls.length} calls in selected time range`)
 
@@ -174,11 +107,11 @@ export async function GET(request: NextRequest) {
     
     // const analytics = processAnalyticsData(filteredCalls, timeRange, startDate, now)
 
-    // Fetch popular intents from Supabase for this user
+    // Fetch popular intents from Supabase for this organisation
     const { data: intents } = await supabase
       .from('intents')
       .select('intent_name')
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .order('created_at', { ascending: false })
 
     // Add intent data to analytics

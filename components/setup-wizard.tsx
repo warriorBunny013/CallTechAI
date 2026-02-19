@@ -4,16 +4,14 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { CheckCircle2, Circle, Phone, MessageSquare, Bot, Rocket, Loader2, ArrowRight } from "lucide-react"
+import { CheckCircle2, Circle, Phone, MessageSquare, Bot, Loader2, ArrowRight } from "lucide-react"
 import Link from "next/link"
-import { toast } from "@/components/ui/use-toast"
 
 interface SetupStatus {
   hasPhoneNumber: boolean
   hasIntents: boolean
   hasSelectedVoiceAgent: boolean
   hasAssistant: boolean
-  isLaunched: boolean
 }
 
 interface SetupWizardProps {
@@ -25,14 +23,23 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     hasPhoneNumber: false,
     hasIntents: false,
     hasSelectedVoiceAgent: false,
-    hasAssistant: false,
-    isLaunched: false
+    hasAssistant: false
   })
   const [isLoading, setIsLoading] = useState(true)
-  const [isLaunching, setIsLaunching] = useState(false)
 
   useEffect(() => {
     checkSetupStatus()
+  }, [])
+
+  // Refetch when page becomes visible (e.g. user returns from Assistants page after saving)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkSetupStatus()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [])
 
   const checkSetupStatus = async () => {
@@ -49,88 +56,23 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
       const intentsData = intentsRes.ok ? await intentsRes.json() : { intents: [] }
       const hasIntents = intentsData.intents?.length > 0
 
-      // Check assistants
-      const assistantsRes = await fetch('/api/assistants')
-      const assistantsData = assistantsRes.ok ? await assistantsRes.json() : { assistants: [] }
-      const hasAssistant = assistantsData.assistants?.length > 0
-      
-      // Check if voice agent is selected (assistant has voiceAgentId in config)
-      const hasSelectedVoiceAgent = hasAssistant && assistantsData.assistants?.some((a: any) => 
-        a.config?.voiceAgentId || a.config?.personality
-      )
-
-      // Check if assistant is launched (phone number linked to assistant)
-      let isLaunched = false
-      if (hasPhoneNumber && hasAssistant) {
-        const phoneNumber = phoneData.phoneNumbers[0]
-        isLaunched = !!phoneNumber.vapi_assistant_id
-      }
+      // Check organisation's selected voice agent (saved in Assistants page)
+      const orgRes = await fetch('/api/organisation')
+      const orgData = orgRes.ok ? await orgRes.json() : { organisation: null }
+      const selectedVoiceAgentId = orgData.organisation?.selected_voice_agent_id ?? null
+      const hasSelectedVoiceAgent = !!selectedVoiceAgentId
+      const hasAssistant = hasSelectedVoiceAgent
 
       setStatus({
         hasPhoneNumber,
         hasIntents,
-        hasSelectedVoiceAgent: hasSelectedVoiceAgent || hasAssistant, // If assistant exists, consider voice agent selected
-        hasAssistant,
-        isLaunched
+        hasSelectedVoiceAgent,
+        hasAssistant
       })
     } catch (error) {
       console.error('Error checking setup status:', error)
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  const handleLaunch = async () => {
-    try {
-      setIsLaunching(true)
-      
-      // Get phone number and assistant
-      const phoneRes = await fetch('/api/phone-numbers')
-      const phoneData = await phoneRes.json()
-      const phoneNumber = phoneData.phoneNumbers[0]
-
-      const assistantsRes = await fetch('/api/assistants')
-      const assistantsData = await assistantsRes.json()
-      const assistant = assistantsData.assistants[0]
-
-      if (!phoneNumber || !assistant) {
-        throw new Error('Phone number or assistant not found')
-      }
-
-      const response = await fetch('/api/assistants/launch', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          phoneNumberId: phoneNumber.id,
-          assistantId: assistant.id
-        })
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to launch assistant')
-      }
-
-      toast({
-        title: "🎉 Assistant Launched!",
-        description: "Your phone number is now active and ready to receive calls!",
-      })
-
-      await checkSetupStatus()
-      
-      if (onComplete) {
-        onComplete()
-      }
-    } catch (error) {
-      console.error('Error launching assistant:', error)
-      toast({
-        title: "Error",
-        description: "Failed to launch assistant. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLaunching(false)
     }
   }
 
@@ -144,11 +86,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     )
   }
 
-  const allComplete = status.hasPhoneNumber && status.hasIntents && status.hasSelectedVoiceAgent && status.hasAssistant && status.isLaunched
-
-  if (allComplete) {
-    return null // Don't show wizard if everything is complete
-  }
+  const allComplete = status.hasPhoneNumber && status.hasIntents && status.hasSelectedVoiceAgent && status.hasAssistant
 
   const steps = [
     {
@@ -174,16 +112,6 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
       icon: Bot,
       completed: status.hasAssistant,
       link: '/dashboard/assistants'
-    },
-    {
-      id: 'launch',
-      title: 'Launch Assistant',
-      description: 'Link your phone number to your assistant and activate it',
-      icon: Rocket,
-      completed: status.isLaunched,
-      action: handleLaunch,
-      loading: isLaunching,
-      disabled: !status.hasPhoneNumber || !status.hasAssistant
     }
   ]
 
@@ -191,7 +119,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
     <Card className="border-2 border-lime-500/20 bg-gradient-to-br from-lime-50/50 to-lime-100/30 dark:from-lime-950/20 dark:to-lime-900/10 shadow-xl rounded-xl">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-xl">
-          <Rocket className="h-5 w-5 text-lime-500" />
+          <Bot className="h-5 w-5 text-lime-500" />
           Setup Your Assistant
         </CardTitle>
         <CardDescription className="text-base">

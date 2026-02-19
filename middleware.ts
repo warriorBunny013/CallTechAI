@@ -1,44 +1,60 @@
-// ============================================
-// FILE: middleware.ts
-// ============================================
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
 
-// Define public routes that don't require authentication
-const isPublicRoute = createRouteMatcher([
+const publicPaths = [
   "/",
-  "/login(.*)",
-  "/signup(.*)",
-  "/api/webhooks(.*)",
-  "/demo(.*)",
-]);
+  "/login",
+  "/signup",
+  "/api/webhooks",
+  "/demo",
+];
+const isPublic = (pathname: string) =>
+  publicPaths.some(
+    (p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith("/api/webhooks")
+  );
 
-export default clerkMiddleware(async (auth, req) => {
-  const { userId } = await auth();
+export async function middleware(request: NextRequest) {
+  let response = NextResponse.next({ request });
 
-  // If user is not signed in and trying to access a protected route
-  if (!userId && !isPublicRoute(req)) {
-    const loginUrl = new URL("/login", req.url);
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const pathname = request.nextUrl.pathname;
+
+  if (!user && !isPublic(pathname)) {
+    const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }
 
-  // If user is signed in and trying to access login/signup pages, redirect to dashboard
-  if (
-    userId &&
-    (req.nextUrl.pathname === "/login" || req.nextUrl.pathname === "/signup")
-  ) {
-    const dashboardUrl = new URL("/dashboard", req.url);
+  if (user && (pathname === "/login" || pathname === "/signup")) {
+    const dashboardUrl = new URL("/dashboard", request.url);
     return NextResponse.redirect(dashboardUrl);
   }
 
-  return NextResponse.next();
-});
+  return response;
+}
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes
     "/(api|trpc)(.*)",
   ],
 };

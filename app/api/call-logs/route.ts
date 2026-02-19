@@ -1,227 +1,229 @@
-import { NextRequest, NextResponse } from 'next/server'
+/**
+ * Call logs for the current user's organisation.
+ * Fetches from both Supabase and VAPI: recordings for phone numbers added in the dashboard.
+ * VAPI is the source of truth for recordings; we merge with our DB for metadata.
+ */
 
-// No sample data - we only want real Vapi data
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { getCurrentUserAndOrg } from "@/lib/org";
+import { fetchVapiCallsForPhoneNumber, type VapiCall } from "@/lib/vapi-fetch-calls";
 
-export async function GET(request: NextRequest) {
-  try {
-    console.log('Call-logs API called')
-    const vapiApiKey = process.env.VAPI_API_KEY || process.env.NEXT_PUBLIC_VAPI_API_KEY
-    
-    console.log('API key check:', {
-      hasKey: !!vapiApiKey,
-      keyLength: vapiApiKey?.length,
-      isDefault: vapiApiKey === 'your_vapi_api_key_here'
-    })
-    
-    if (!vapiApiKey || vapiApiKey === 'your_vapi_api_key_here') {
-      console.log('Vapi API key not configured')
-      return NextResponse.json(
-        { error: 'Vapi API key not configured. Please set VAPI_API_KEY in your environment variables.' },
-        { status: 401 }
-      )
-    }
-
-    // Since the Vapi SDK import is failing, let's use direct HTTP requests to the Vapi API
-    console.log('Using direct HTTP requests to Vapi API...')
-    
-    // We'll skip the SDK and use Node.js built-in HTTP
-    const https = require('https')
-    console.log('Vapi instance created')
-    
-    // Debug: Check what's available
-    console.log('Using direct HTTP requests to Vapi API')
-    
-    // Get call logs from Vapi using direct HTTP requests
-    let calls: any[] = []
-    try {
-      console.log('Fetching calls from Vapi using direct HTTP...')
-      
-      // Try different possible Vapi API endpoints for calls
-      const endpoints = ['/call', '/calls', '/v1/call', '/v1/calls']
-      let lastError = null
-      
-      for (const endpoint of endpoints) {
-        try {
-          console.log(`Trying endpoint: ${endpoint}`)
-          const options = {
-            hostname: 'api.vapi.ai',
-            port: 443,
-            path: endpoint,
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${vapiApiKey}`,
-              'Content-Type': 'application/json'
-            }
-          }
-          
-          const response = await new Promise<{ status: number; data: any }>((resolve, reject) => {
-            const req = https.request(options, (res: any) => {
-              let data = ''
-              res.on('data', (chunk: any) => data += chunk)
-              res.on('end', () => {
-                try {
-                  const jsonData = JSON.parse(data)
-                  resolve({ status: res.statusCode || 0, data: jsonData })
-                } catch (parseError) {
-                  reject(new Error('Failed to parse response'))
-                }
-              })
-            })
-            
-            req.on('error', reject)
-            req.end()
-          })
-          
-          if (response.status >= 200 && response.status < 300) {
-            calls = response.data?.data || response.data?.calls || response.data || []
-            console.log(`Success with endpoint ${endpoint}:`, response)
-            break
-          } else {
-            console.log(`Endpoint ${endpoint} failed with status: ${response.status}`)
-            lastError = new Error(`HTTP request failed: ${response.status}`)
-          }
-        } catch (endpointError) {
-          console.log(`Endpoint ${endpoint} error:`, endpointError)
-          lastError = endpointError
-        }
-      }
-      
-      if (calls.length === 0 && lastError) {
-        throw lastError
-      }
-      
-      console.log('Successfully fetched calls from Vapi:', calls.length, 'calls')
-      
-      if (calls.length > 0) {
-        console.log('Sample call data:', calls[0])
-        console.log('Sample analysis data:', calls[0].analysis || calls[0].summary || calls[0].transcript || calls[0].insights)
-      }
-    } catch (vapiError) {
-      console.error('Error fetching calls from Vapi:', vapiError)
-      return NextResponse.json(
-        { error: 'Failed to fetch calls from Vapi. Please check your API key and account.' },
-        { status: 500 }
-      )
-    }
-    
-    // If no calls returned from Vapi, return empty array
-    if (!calls || calls.length === 0) {
-      console.log('No calls returned from Vapi')
-      return NextResponse.json([])
-    }
-    
-          // Transform the data to match our application's format
-      const transformedCalls = calls.map((call: any) => {
-        // Calculate duration from various possible fields
-        let durationSeconds = 0
-        
-        if (call.duration) {
-          // If duration is already in seconds
-          durationSeconds = call.duration
-        } else if (call.durationMs) {
-          // If duration is in milliseconds
-          durationSeconds = Math.floor(call.durationMs / 1000)
-        } else if (call.startTime && call.endTime) {
-          // Calculate from start and end times
-          const start = new Date(call.startTime).getTime()
-          const end = new Date(call.endTime).getTime()
-          durationSeconds = Math.floor((end - start) / 1000)
-        } else if (call.start && call.end) {
-          // Alternative start/end field names
-          const start = new Date(call.start).getTime()
-          const end = new Date(call.end).getTime()
-          durationSeconds = Math.floor((end - start) / 1000)
-        }
-        
-        // Determine status (pass/fail) based on call data
-        let callStatus = 'pass'
-        if (call.status === 'failed' || call.status === 'error' || call.status === 'disconnected') {
-          callStatus = 'fail'
-        } else if (call.status === 'completed' || call.status === 'success') {
-          callStatus = 'pass'
-        }
-        
-        return {
-          id: call.id || `call-${Date.now()}-${Math.random()}`,
-          phoneNumber: call.phoneNumber || null,
-          isWebCall: !call.phoneNumber,
-          date: call.createdAt ? new Date(call.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-          time: call.createdAt ? new Date(call.createdAt).toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-          }) : new Date().toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-          }),
-          duration: formatDuration(durationSeconds),
-          status: callStatus,
-          recordingUrl: call.recordingUrl || call.recording || null,
-          analysis: extractAnalysisText(call.analysis || call.summary || call.transcript || call.insights),
-          createdAt: call.createdAt || new Date().toISOString()
-        }
-      })
-
-    return NextResponse.json(transformedCalls)
-  } catch (error) {
-    console.error('Error in call-logs API:', error)
-    return NextResponse.json(
-      { error: 'Internal server error. Please try again later.' },
-      { status: 500 }
-    )
-  }
+/** Normalise phone to digits for comparison (E.164 may have + or spaces). */
+function normalisePhoneForMatch(p: string | null | undefined): string {
+  if (p == null || typeof p !== "string") return "";
+  return p.replace(/\D/g, "").trim() || p.trim();
 }
 
 function formatDuration(seconds: number): string {
-  if (!seconds) return '0s'
-  
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  
-  if (minutes === 0) {
-    return `${remainingSeconds}s`
-  }
-  
-  return `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`
+  if (!seconds) return "0s";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m === 0 ? `${s}s` : `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
-function extractAnalysisText(analysisData: any): string {
-  if (!analysisData) return 'No analysis available'
-  
-  // If it's already a string, return it
-  if (typeof analysisData === 'string') {
-    return analysisData
-  }
-  
-  // If it's an object, try to extract text from common fields
-  if (typeof analysisData === 'object') {
-    // Try different possible text fields
-    const textFields = ['text', 'content', 'summary', 'transcript', 'insights', 'analysis', 'description']
-    
-    for (const field of textFields) {
-      if (analysisData[field] && typeof analysisData[field] === 'string') {
-        return analysisData[field]
-      }
+function extractAnalysisText(v: unknown): string {
+  if (v == null) return "No analysis available";
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    for (const key of ["text", "content", "summary", "transcript", "insights", "analysis"]) {
+      if (typeof o[key] === "string") return o[key] as string;
     }
-    
-    // If no text field found, try to stringify the object
+    if (typeof o.summary === "string") return o.summary;
     try {
-      // Look for nested text content
-      if (analysisData.summary && typeof analysisData.summary === 'string') {
-        return analysisData.summary
-      }
-      if (analysisData.successEvaluation && typeof analysisData.successEvaluation === 'string') {
-        return analysisData.successEvaluation
-      }
-      
-      // If still no text, return a formatted version of the object
-      return JSON.stringify(analysisData, null, 2).substring(0, 200) + '...'
-    } catch (error) {
-      return 'Analysis data available (format not supported)'
+      return JSON.stringify(o).slice(0, 200) + "...";
+    } catch {
+      return "Analysis available";
     }
   }
-  
-  // If it's any other type, convert to string
-  return String(analysisData)
+  return String(v);
+}
+
+function transformVapiCallToLog(
+  vapiCall: VapiCall,
+  assistantPhoneNumber: string
+): {
+  id: string;
+  phoneNumber: string;
+  isWebCall: boolean;
+  date: string;
+  time: string;
+  duration: string;
+  durationSeconds: number;
+  status: string;
+  recordingUrl: string | null;
+  analysis: string;
+  createdAt: string;
+} {
+  const createdAtRaw =
+    vapiCall.endedAt ?? vapiCall.startedAt ?? vapiCall.createdAt ?? "";
+  const date = createdAtRaw ? new Date(createdAtRaw).toISOString().split("T")[0] : "";
+  const time = createdAtRaw
+    ? new Date(createdAtRaw).toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })
+    : "";
+  let durationSeconds = 0;
+  if (vapiCall.endedAt && vapiCall.startedAt) {
+    durationSeconds = Math.floor(
+      (new Date(vapiCall.endedAt).getTime() - new Date(vapiCall.startedAt).getTime()) / 1000
+    );
+  } else if ((vapiCall as { duration?: number }).duration) {
+    durationSeconds = Math.floor(Number((vapiCall as { duration?: number }).duration) / 1000);
+  }
+  const phoneNumber =
+    (vapiCall.customer as { number?: string } | undefined)?.number ?? assistantPhoneNumber ?? "";
+  const status =
+    vapiCall.status === "ended" || vapiCall.status === "completed" ? "pass" : "fail";
+
+  return {
+    id: vapiCall.id,
+    phoneNumber,
+    isWebCall: !phoneNumber,
+    date,
+    time,
+    duration: formatDuration(durationSeconds),
+    durationSeconds,
+    status,
+    recordingUrl: vapiCall.recordingUrl ?? vapiCall.recording ?? null,
+    analysis: extractAnalysisText(vapiCall.analysis ?? vapiCall.summary ?? vapiCall.transcript),
+    createdAt: createdAtRaw || new Date().toISOString(),
+  };
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const userAndOrg = await getCurrentUserAndOrg();
+    if (!userAndOrg) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const supabase = await createClient();
+    const orgId = userAndOrg.organisationId;
+    const vapiApiKey = process.env.VAPI_API_KEY;
+
+    // 1. Get phone numbers added in the dashboard (with vapi_phone_number_id for VAPI fetch)
+    const { data: orgPhones, error: phonesError } = await supabase
+      .from("phone_numbers")
+      .select("phone_number, vapi_phone_number_id")
+      .eq("organisation_id", orgId);
+
+    if (phonesError) {
+      console.error("[call-logs] Error fetching phone numbers:", phonesError);
+      return NextResponse.json(
+        { error: "Failed to fetch phone numbers" },
+        { status: 500 }
+      );
+    }
+
+    const orgPhoneSet = new Set(
+      (orgPhones ?? [])
+        .map((r) => (r as { phone_number: string }).phone_number)
+        .filter(Boolean)
+        .map((p) => normalisePhoneForMatch(p))
+    );
+
+    const phoneRows = (orgPhones ?? []) as { phone_number: string; vapi_phone_number_id?: string }[];
+
+    // 2. Fetch calls from VAPI for each dashboard phone number (source of recordings)
+    const vapiCallsByVapiId = new Map<string, ReturnType<typeof transformVapiCallToLog>>();
+    if (vapiApiKey && vapiApiKey !== "your_vapi_api_key_here") {
+      for (const row of phoneRows) {
+        const vapiId = row.vapi_phone_number_id;
+        if (!vapiId) continue;
+        const vapiCalls = await fetchVapiCallsForPhoneNumber(vapiId, 100, vapiApiKey);
+        for (const c of vapiCalls) {
+          const log = transformVapiCallToLog(c, row.phone_number);
+          vapiCallsByVapiId.set(c.id, log);
+        }
+      }
+    }
+
+    // 3. Fetch calls from Supabase (our DB - may have metadata from webhooks)
+    const { data: dbCalls, error } = await supabase
+      .from("calls")
+      .select(
+        "id, vapi_call_id, caller_phone_number, assistant_phone_number, call_status, duration_seconds, recording_url, transcript, summary, analysis, started_at, created_at"
+      )
+      .eq("organisation_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (error) {
+      console.error("[call-logs] Supabase error:", error);
+      return NextResponse.json(
+        { error: "Failed to fetch call logs" },
+        { status: 500 }
+      );
+    }
+
+    // 4. Filter DB calls to dashboard numbers only
+    const filteredDbCalls =
+      orgPhoneSet.size === 0
+        ? []
+        : (dbCalls ?? []).filter((call: Record<string, unknown>) => {
+            const assistantNum = (call.assistant_phone_number as string) ?? "";
+            const key = normalisePhoneForMatch(assistantNum);
+            return key ? orgPhoneSet.has(key) : false;
+          });
+
+    // 5. Merge: prefer VAPI for recordingUrl when available; use DB for calls not in VAPI
+    const seenVapiIds = new Set<string>();
+    const merged: { id: string; phoneNumber: string; isWebCall: boolean; date: string; time: string; duration: string; durationSeconds: number; status: string; recordingUrl: string | null; analysis: string; createdAt: string }[] = [];
+
+    for (const vapiLog of vapiCallsByVapiId.values()) {
+      merged.push(vapiLog);
+      seenVapiIds.add(vapiLog.id);
+    }
+
+    for (const call of filteredDbCalls as (Record<string, unknown> & { vapi_call_id?: string })[]) {
+      const vapiId = call.vapi_call_id as string | undefined;
+      if (vapiId && seenVapiIds.has(vapiId)) continue;
+      const phoneNumber =
+        (call.caller_phone_number as string) || (call.assistant_phone_number as string) || null;
+      const createdAtRaw = (call.started_at as string) || (call.created_at as string) || "";
+      const date = createdAtRaw ? new Date(createdAtRaw).toISOString().split("T")[0] : "";
+      const time = createdAtRaw
+        ? new Date(createdAtRaw).toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          })
+        : "";
+      const durationSeconds = Number(call.duration_seconds) || 0;
+      const status = call.call_status === "completed" || call.call_status === "success" ? "pass" : "fail";
+      merged.push({
+        id: (call.id as string) ?? call.vapi_call_id ?? `db-${call.id}`,
+        phoneNumber: phoneNumber ?? "",
+        isWebCall: !phoneNumber,
+        date,
+        time,
+        duration: formatDuration(durationSeconds),
+        durationSeconds,
+        status,
+        recordingUrl: call.recording_url ?? null,
+        analysis: extractAnalysisText(
+          call.analysis ?? call.summary ?? call.transcript ?? null
+        ),
+        createdAt: createdAtRaw || new Date().toISOString(),
+      });
+    }
+
+    // 6. Sort by createdAt descending
+    merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return NextResponse.json(merged.slice(0, 500));
+  } catch (err) {
+    console.error("[call-logs] Error:", err);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
 }
