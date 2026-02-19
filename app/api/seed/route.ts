@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { sampleIntents } from '@/lib/sample-data'
-import { auth } from '@clerk/nextjs/server'
+import { getCurrentUser } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const user = await getCurrentUser()
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -18,7 +17,7 @@ export async function POST(request: NextRequest) {
     const { error: deleteError } = await supabase
       .from('intents')
       .delete()
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
 
     if (deleteError) {
       console.error('Error clearing data:', deleteError)
@@ -31,7 +30,7 @@ export async function POST(request: NextRequest) {
     // Insert sample data with user_id
     const intentsWithUserId = sampleIntents.map(intent => ({
       ...intent,
-      user_id: userId
+      user_id: user.id
     }))
 
     const { data: intents, error: insertError } = await supabase

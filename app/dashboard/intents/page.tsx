@@ -19,7 +19,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { Plus, Save, Trash2, Edit, MessageSquare, Play, Loader2 } from "lucide-react"
+import { Plus, Trash2, Edit, MessageSquare, Loader2 } from "lucide-react"
 import { Intent } from "@/lib/supabase"
 
 export default function IntentsPage() {
@@ -31,7 +31,6 @@ export default function IntentsPage() {
     intent_name: "",
     example_user_phrases: [""],
     english_responses: [""],
-    russian_responses: [""],
   })
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -76,13 +75,6 @@ export default function IntentsPage() {
     })
   }
 
-  const handleAddResponseRu = () => {
-    setCurrentIntent({
-      ...currentIntent,
-      russian_responses: [...currentIntent.russian_responses, ""],
-    })
-  }
-
   const handleExampleChange = (index: number, value: string) => {
     const newExamples = [...currentIntent.example_user_phrases]
     newExamples[index] = value
@@ -98,15 +90,6 @@ export default function IntentsPage() {
     setCurrentIntent({
       ...currentIntent,
       english_responses: newResponses,
-    })
-  }
-
-  const handleResponseRuChange = (index: number, value: string) => {
-    const newResponses = [...currentIntent.russian_responses]
-    newResponses[index] = value
-    setCurrentIntent({
-      ...currentIntent,
-      russian_responses: newResponses,
     })
   }
 
@@ -128,22 +111,12 @@ export default function IntentsPage() {
     })
   }
 
-  const handleRemoveResponseRu = (index: number) => {
-    const newResponses = [...currentIntent.russian_responses]
-    newResponses.splice(index, 1)
-    setCurrentIntent({
-      ...currentIntent,
-      russian_responses: newResponses,
-    })
-  }
-
   const handleNewIntent = () => {
     setCurrentIntent({
       id: "",
       intent_name: "",
       example_user_phrases: [""],
       english_responses: [""],
-      russian_responses: [""],
     })
     setIsEditing(false)
     setIsDialogOpen(true)
@@ -155,7 +128,6 @@ export default function IntentsPage() {
       intent_name: intent.intent_name,
       example_user_phrases: intent.example_user_phrases,
       english_responses: intent.english_responses,
-      russian_responses: intent.russian_responses,
     })
     setIsEditing(true)
     setIsDialogOpen(true)
@@ -202,7 +174,7 @@ export default function IntentsPage() {
           intent_name: currentIntent.intent_name,
           example_user_phrases: currentIntent.example_user_phrases.filter(phrase => phrase.trim() !== ''),
           english_responses: currentIntent.english_responses.filter(response => response.trim() !== ''),
-          russian_responses: currentIntent.russian_responses.filter(response => response.trim() !== ''),
+          russian_responses: [],
         }),
       })
 
@@ -307,37 +279,15 @@ export default function IntentsPage() {
                           </ul>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <h4 className="text-sm font-medium mb-2">English Responses</h4>
-                            <ul className="space-y-1 text-sm">
-                              {intent.english_responses.map((response, index) => (
-                                <li key={index} className="text-muted-foreground">
-                                  • {response}
-                                </li>
-                              ))}
-                            </ul>
-                            <div className="mt-2">
-                              <Button variant="secondary" size="sm">
-                                <Play className="mr-2 h-4 w-4" /> Test Response
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <h4 className="text-sm font-medium mb-2">Russian Responses</h4>
-                            <ul className="space-y-1 text-sm">
-                              {intent.russian_responses.map((response, index) => (
-                                <li key={index} className="text-muted-foreground">
-                                  • {response}
-                                </li>
-                              ))}
-                            </ul>
-                            <div className="mt-2">
-                              <Button variant="secondary" size="sm">
-                                <Play className="mr-2 h-4 w-4" /> Test Response
-                              </Button>
-                            </div>
-                          </div>
+                        <div>
+                          <h4 className="text-sm font-medium mb-2">Expected Response</h4>
+                          <ul className="space-y-1 text-sm">
+                            {intent.english_responses.map((response, index) => (
+                              <li key={index} className="text-muted-foreground">
+                                • {response}
+                              </li>
+                            ))}
+                          </ul>
                         </div>
                       </div>
                     </CardContent>
@@ -386,10 +336,9 @@ export default function IntentsPage() {
             </div>
 
             <Tabs defaultValue="examples" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="examples">Example Phrases</TabsTrigger>
-                <TabsTrigger value="responses-en">English Responses</TabsTrigger>
-                <TabsTrigger value="responses-ru">Russian Responses</TabsTrigger>
+                <TabsTrigger value="responses-en">Expected Response</TabsTrigger>
               </TabsList>
 
               <TabsContent value="examples" className="space-y-4">
@@ -422,12 +371,12 @@ export default function IntentsPage() {
               <TabsContent value="responses-en" className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label>English Responses</Label>
+                    <Label>Expected Response</Label>
                     <Button variant="outline" size="sm" onClick={handleAddResponseEn}>
                       <Plus className="h-4 w-4 mr-1" /> Add Response
                     </Button>
                   </div>
-                  <p className="text-sm text-muted-foreground">Add responses in English that your assistant will use</p>
+                  <p className="text-sm text-muted-foreground">Add responses that your assistant will use</p>
 
                   {currentIntent.english_responses.map((response, index) => (
                     <div key={index} className="flex items-center gap-2">
@@ -444,44 +393,6 @@ export default function IntentsPage() {
                       )}
                     </div>
                   ))}
-                  <div className="mt-4">
-                    <Button variant="secondary">
-                      <Play className="mr-2 h-4 w-4" /> Test Response
-                    </Button>
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="responses-ru" className="space-y-4">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Russian Responses</Label>
-                    <Button variant="outline" size="sm" onClick={handleAddResponseRu}>
-                      <Plus className="h-4 w-4 mr-1" /> Add Response
-                    </Button>
-                  </div>
-                  <p className="text-sm text-muted-foreground">Add responses in Russian that your assistant will use</p>
-
-                  {currentIntent.russian_responses.map((response, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <Textarea
-                        value={response}
-                        onChange={(e) => handleResponseRuChange(index, e.target.value)}
-                        placeholder="e.g., Наш рабочий график: с понедельника по пятницу с 9:00 до 18:00."
-                        className="min-h-[100px]"
-                      />
-                      {currentIntent.russian_responses.length > 1 && (
-                        <Button variant="ghost" size="icon" onClick={() => handleRemoveResponseRu(index)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                  <div className="mt-4">
-                    <Button variant="secondary">
-                      <Play className="mr-2 h-4 w-4" /> Test Response
-                    </Button>
-                  </div>
                 </div>
               </TabsContent>
             </Tabs>

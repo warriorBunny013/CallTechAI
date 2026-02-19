@@ -31,8 +31,15 @@ import {
   CreditCard,
   Loader2,
 } from "lucide-react";
-import { SignedIn, SignOutButton, UserButton } from "@clerk/nextjs";
 import { useSubscription } from "@/hooks/use-subscription";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { LogOut } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -52,8 +59,13 @@ function DemoLayoutContent({
   const [mounted, setMounted] = useState(false);
   const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const [verificationAttempted, setVerificationAttempted] = useState(false);
-  const { hasActiveSubscription, loading: subscriptionLoading, refetch } =
-    useSubscription();
+  const { loading: subscriptionLoading, refetch } = useSubscription();
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/");
+    router.refresh();
+  };
 
   // Prevent hydration errors
   useEffect(() => {
@@ -157,58 +169,10 @@ function DemoLayoutContent({
     );
   }
 
-  // If no active subscription and not on pricing page, show pricing
-  if (!hasActiveSubscription && pathname !== "/dashboard/pricing") {
-    return (
-      <SignedIn>
-        <div className="min-h-screen bg-background">
-          <header className="border-b">
-            <div className="flex h-16 items-center gap-4 px-6">
-              <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-6 w-6 text-rose-500"
-                >
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                  <line x1="12" x2="12" y1="19" y2="22" />
-                </svg>
-                <span className="text-xl font-bold">CallTechAI</span>
-              </Link>
-              <div className="flex-1" />
-              <ModeToggle />
-              <UserButton />
-            </div>
-          </header>
-          <main className="container mx-auto py-8">
-            <Card className="max-w-md mx-auto">
-              <CardHeader className="text-center">
-                <CardTitle>Subscription Required</CardTitle>
-                <CardDescription>
-                  Please subscribe to access the demo features
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="text-center">
-                <Button asChild className="bg-rose-500 hover:bg-rose-600">
-                  <Link href="/dashboard/pricing">View Pricing Plans</Link>
-                </Button>
-              </CardContent>
-            </Card>
-          </main>
-        </div>
-      </SignedIn>
-    );
-  }
+  // Voice demo never blocks on subscription: no paywall here.
+  // Subscription/trial gating is only in dashboard layout; this route is for quick testing.
 
-  // Show full layout with sidebar for subscribed users
   return (
-    <SignedIn>
       <SidebarProvider>
         <div className="flex min-h-screen w-full">
           <Sidebar className="w-56">
@@ -360,29 +324,12 @@ function DemoLayoutContent({
                   </SidebarMenuButton>
                 </SidebarMenuItem> */}
                 <SidebarMenuItem>
-                  <SignOutButton>
-                    <SidebarMenuButton asChild>
-                      <button>
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="24"
-                          height="24"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="h-4 w-4"
-                        >
-                          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                          <polyline points="16,17 21,12 16,7" />
-                          <line x1="21" x2="9" y1="12" y2="12" />
-                        </svg>
-                        <span>Logout</span>
-                      </button>
-                    </SidebarMenuButton>
-                  </SignOutButton>
+                  <SidebarMenuButton asChild>
+                    <button type="button" onClick={handleLogout}>
+                      <LogOut className="h-4 w-4" />
+                      <span>Logout</span>
+                    </button>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarFooter>
@@ -392,13 +339,26 @@ function DemoLayoutContent({
               <SidebarTrigger />
               <div className="flex-1" />
               <ModeToggle />
-              <UserButton />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="rounded-full">
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback className="bg-rose-500/20 text-rose-600 text-sm">U</AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </header>
             <main className="flex-1 w-full p-6">{children}</main>
           </div>
         </div>
       </SidebarProvider>
-    </SignedIn>
   );
 }
 
