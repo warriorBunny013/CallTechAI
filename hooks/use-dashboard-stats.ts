@@ -1,21 +1,19 @@
 import { useState, useEffect } from 'react'
 
 interface DashboardStats {
-  totalCalls: number
-  avgDuration: string
   intentsCount: number
-  recentCalls: any[]
+  hasPhoneNumber: boolean
+  hasAssistant: boolean
   assistantActive: boolean
   error?: string
 }
 
 export function useDashboardStats() {
   const [stats, setStats] = useState<DashboardStats>({
-    totalCalls: 0,
-    avgDuration: '0m 0s',
     intentsCount: 0,
-    recentCalls: [],
-    assistantActive: true
+    hasPhoneNumber: false,
+    hasAssistant: false,
+    assistantActive: false
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

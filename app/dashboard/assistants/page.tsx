@@ -3,331 +3,262 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Bot, CheckCircle2, Loader2, Filter } from "lucide-react"
+import { Bot, CheckCircle2, Loader2, Mic, Plus } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { voiceAgents, getVoiceAgents, type VoiceAgent } from "@/lib/voice-agents"
+
+interface VoiceOption {
+  id: string
+  name: string
+  provider: string
+  description?: string
+}
 
 export default function AssistantsPage() {
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-  const [isCreating, setIsCreating] = useState(false)
-  const [languageFilter, setLanguageFilter] = useState<'all' | 'english' | 'multilingual' | 'spanish'>('all')
-  const [genderFilter, setGenderFilter] = useState<'all' | 'male' | 'female' | 'neutral'>('all')
-  const [filteredAgents, setFilteredAgents] = useState<VoiceAgent[]>(voiceAgents)
+  const [assistantName, setAssistantName] = useState("")
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null)
+  const [voices, setVoices] = useState<VoiceOption[]>([])
+  const [voicesLoading, setVoicesLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [currentAssistant, setCurrentAssistant] = useState<{ id: string; name: string } | null>(null)
+  const [orgLoading, setOrgLoading] = useState(true)
   const [userIntents, setUserIntents] = useState<any[]>([])
-  const [hasAssistant, setHasAssistant] = useState(false)
 
   useEffect(() => {
+    fetchVoices()
+    fetchOrganisation()
     fetchUserIntents()
-    checkExistingAssistant()
   }, [])
 
-  useEffect(() => {
-    const filtered = getVoiceAgents({
-      language: languageFilter,
-      gender: genderFilter
-    })
-    setFilteredAgents(filtered)
-  }, [languageFilter, genderFilter])
+  const fetchVoices = async () => {
+    try {
+      setVoicesLoading(true)
+      const res = await fetch("/api/assistants/voices")
+      if (res.ok) {
+        const data = await res.json()
+        setVoices(data.voices || [])
+      }
+    } catch (e) {
+      console.error("Error fetching voices:", e)
+    } finally {
+      setVoicesLoading(false)
+    }
+  }
+
+  const fetchOrganisation = async () => {
+    try {
+      setOrgLoading(true)
+      const res = await fetch("/api/assistants/current")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.assistant) {
+          setCurrentAssistant({
+            id: data.assistant.id,
+            name: data.assistant.name,
+          })
+        } else {
+          setCurrentAssistant(null)
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching organisation:", e)
+    } finally {
+      setOrgLoading(false)
+    }
+  }
 
   const fetchUserIntents = async () => {
     try {
-      const response = await fetch('/api/intents')
-      if (response.ok) {
-        const data = await response.json()
+      const res = await fetch("/api/intents")
+      if (res.ok) {
+        const data = await res.json()
         setUserIntents(data.intents || [])
       }
-    } catch (error) {
-      console.error('Error fetching intents:', error)
+    } catch (e) {
+      console.error("Error fetching intents:", e)
     }
   }
 
-  const checkExistingAssistant = async () => {
-    try {
-      const response = await fetch('/api/assistants')
-      if (response.ok) {
-        const data = await response.json()
-        setHasAssistant((data.assistants || []).length > 0)
-      }
-    } catch (error) {
-      console.error('Error checking assistant:', error)
-    }
-  }
-
-  const handleCreateAssistant = async (agentId: string) => {
-    if (userIntents.length === 0) {
+  const handleCreateAssistant = async () => {
+    const name = assistantName.trim()
+    if (!name) {
       toast({
-        title: "No Intents Found",
-        description: "Please create at least one intent before creating an assistant.",
+        title: "Name required",
+        description: "Please enter a name for your assistant.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!selectedVoiceId) {
+      toast({
+        title: "Voice required",
+        description: "Please select a voice for your assistant.",
         variant: "destructive",
       })
       return
     }
 
     try {
-      setIsCreating(true)
-      setSelectedAgent(agentId)
-
-      const agent = getVoiceAgents().find(a => a.id === agentId)
-      if (!agent) {
-        throw new Error('Voice agent not found')
-      }
-
-      // Create assistant with selected voice agent and user's intents
-      const response = await fetch('/api/create-assistant', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      setCreating(true)
+      const res = await fetch("/api/assistants/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          intentIds: userIntents.map(i => i.id),
-          name: agent.name,
-          voiceAgent: agent
+          name,
+          voiceId: selectedVoiceId,
+          voiceProvider: "11labs",
         }),
       })
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create assistant')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to create assistant")
       }
 
+      setCurrentAssistant({ id: data.assistant.id, name: data.assistant.name })
       toast({
-        title: "Success!",
-        description: `Your assistant "${agent.name}" has been created successfully!`,
+        title: "Assistant created",
+        description: `${name} has been created and linked to your phone numbers. It will appear in your VAPI dashboard.`,
       })
-
-      setHasAssistant(true)
-      checkExistingAssistant()
-    } catch (error: any) {
-      console.error('Error creating assistant:', error)
+      setAssistantName("")
+      setSelectedVoiceId(null)
+    } catch (e: unknown) {
       toast({
         title: "Error",
-        description: error.message || "Failed to create assistant. Please try again.",
+        description: e instanceof Error ? e.message : "Failed to create assistant.",
         variant: "destructive",
       })
     } finally {
-      setIsCreating(false)
-      setSelectedAgent(null)
-    }
-  }
-
-  const getLanguageBadgeColor = (language: string) => {
-    switch (language) {
-      case 'english':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100'
-      case 'spanish':
-        return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100'
-      case 'multilingual':
-        return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100'
-      default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-100'
-    }
-  }
-
-  const getGenderBadgeColor = (gender: string) => {
-    switch (gender) {
-      case 'male':
-        return 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-100'
-      case 'female':
-        return 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-100'
-      case 'neutral':
-        return 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'
-      default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-100'
+      setCreating(false)
     }
   }
 
   return (
     <div className="space-y-6">
       <Toaster />
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Voice Assistants</h1>
-          <p className="text-muted-foreground mt-2">
-            Choose a voice agent personality for your AI assistant
-          </p>
-        </div>
+
+      <div>
+        <h1 className="text-3xl font-bold">Create Assistant</h1>
+        <p className="text-muted-foreground mt-2">
+          Create a custom voice assistant for your organisation. Name it, choose a voice, and your dashboard intents will be added to its system prompt.
+        </p>
       </div>
 
-      {/* Filters */}
-      <Card>
+      <Card className="border-lime-500/30 bg-lime-500/5 dark:bg-lime-500/10">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Filter className="h-5 w-5" />
-            Filters
+            <Bot className="h-5 w-5 text-lime-500" />
+            Create your assistant
           </CardTitle>
+          <CardDescription>
+            Your assistant will use the intents saved in the dashboard. Add or edit intents anytime—the system prompt will update automatically.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <Label>Language</Label>
-              <Select value={languageFilter} onValueChange={(value: any) => setLanguageFilter(value)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Languages</SelectItem>
-                  <SelectItem value="english">English Only</SelectItem>
-                  <SelectItem value="spanish">Spanish Only</SelectItem>
-                  <SelectItem value="multilingual">Multilingual</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Gender</Label>
-              <Select value={genderFilter} onValueChange={(value: any) => setGenderFilter(value)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Genders</SelectItem>
-                  <SelectItem value="male">Male</SelectItem>
-                  <SelectItem value="female">Female</SelectItem>
-                  <SelectItem value="neutral">Neutral</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="assistant-name">Assistant name</Label>
+            <Input
+              id="assistant-name"
+              placeholder="e.g. Taylor, Sarah, Alex"
+              value={assistantName}
+              onChange={(e) => setAssistantName(e.target.value)}
+              disabled={creating}
+              className="max-w-sm"
+            />
           </div>
+
+          <div className="space-y-2">
+            <Label>Voice configuration</Label>
+            <p className="text-sm text-muted-foreground">
+              Select a voice from the 11labs provider. Your assistant will greet callers with: &quot;Hi there, this is {assistantName || "[name]"}. How can I help you today?&quot;
+            </p>
+            {voicesLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading voices...
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {voices.map((voice) => (
+                  <button
+                    key={voice.id}
+                    type="button"
+                    onClick={() => setSelectedVoiceId(voice.id)}
+                    disabled={creating}
+                    className={`flex items-center gap-3 rounded-lg border p-4 text-left transition-colors ${
+                      selectedVoiceId === voice.id
+                        ? "border-lime-500 bg-lime-500/10 ring-2 ring-lime-500"
+                        : "border-border hover:bg-muted/50"
+                    }`}
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted">
+                      <Mic className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{voice.name}</div>
+                      {voice.description && (
+                        <div className="text-xs text-muted-foreground">{voice.description}</div>
+                      )}
+                      {selectedVoiceId === voice.id && (
+                        <CheckCircle2 className="mt-1 h-4 w-4 text-lime-500" />
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Button
+            onClick={handleCreateAssistant}
+            disabled={creating || !assistantName.trim() || !selectedVoiceId}
+            className="bg-lime-500 hover:bg-lime-600 text-black font-semibold"
+          >
+            {creating ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            ) : (
+              <Plus className="h-4 w-4 mr-2" />
+            )}
+            Create assistant
+          </Button>
+
+          {currentAssistant && (
+            <div className="flex items-center gap-2 rounded-lg border border-lime-500/30 bg-lime-500/5 p-3">
+              <CheckCircle2 className="h-5 w-5 text-lime-500 shrink-0" />
+              <div>
+                <p className="font-medium">Active assistant: {currentAssistant.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  Linked to your phone numbers. Intents from the dashboard are synced to this assistant.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {userIntents.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Add <a href="/dashboard/intents" className="underline text-lime-600 dark:text-lime-400">intents</a> (hours, services, FAQs) so your assistant can answer callers correctly.
+            </p>
+          )}
         </CardContent>
       </Card>
 
-      {/* Info Card */}
-      {userIntents.length === 0 && (
-        <Card className="border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-950/20">
-          <CardContent className="pt-6">
-            <p className="text-sm text-yellow-800 dark:text-yellow-200">
-              <strong>Note:</strong> You need to create at least one intent before creating an assistant. 
-              <a href="/dashboard/intents" className="underline ml-1">Go to Intents →</a>
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {hasAssistant && (
-        <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/20">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-green-800 dark:text-green-200">
-              <CheckCircle2 className="h-5 w-5" />
-              <p className="text-sm font-medium">
-                You already have an assistant created. Creating a new one will replace your existing assistant.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Voice Agents Grid */}
-      {filteredAgents.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Bot className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No voice agents found</h3>
-            <p className="text-muted-foreground text-center">
-              Try adjusting your filters to see more options
-            </p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {filteredAgents.map((agent) => (
-            <Card
-              key={agent.id}
-              className={`transition-all hover:shadow-lg ${
-                selectedAgent === agent.id ? 'ring-2 ring-lime-500' : ''
-              }`}
-            >
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="flex items-center gap-2">
-                      <Bot className="h-5 w-5 text-lime-500" />
-                      {agent.name}
-                    </CardTitle>
-                    <CardDescription className="mt-2">
-                      {agent.description}
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm font-medium mb-1">Personality</p>
-                  <p className="text-sm text-muted-foreground">{agent.personality}</p>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <Badge className={getLanguageBadgeColor(agent.language)}>
-                    {agent.language === 'english' ? 'English' :
-                     agent.language === 'spanish' ? 'Spanish' :
-                     'Multilingual'}
-                  </Badge>
-                  <Badge className={getGenderBadgeColor(agent.gender)}>
-                    {agent.gender === 'male' ? 'Male' :
-                     agent.gender === 'female' ? 'Female' :
-                     'Neutral'}
-                  </Badge>
-                </div>
-
-                <div className="pt-2 border-t">
-                  <p className="text-xs text-muted-foreground mb-2">First Message:</p>
-                  <p className="text-sm italic">"{agent.firstMessage}"</p>
-                </div>
-
-                <Button
-                  onClick={() => handleCreateAssistant(agent.id)}
-                  disabled={isCreating || userIntents.length === 0}
-                  className="w-full bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  {isCreating && selectedAgent === agent.id ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    <>
-                      <Bot className="h-4 w-4 mr-2" />
-                      Create Assistant
-                    </>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{filteredAgents.length}</div>
-            <p className="text-xs text-muted-foreground">Available Agents</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold">{userIntents.length}</div>
-            <p className="text-xs text-muted-foreground">Your Intents</p>
+            <p className="text-xs text-muted-foreground">Your intents (synced to assistant)</p>
+            <a href="/dashboard/intents" className="text-sm text-lime-600 dark:text-lime-400 underline mt-1 inline-block">Manage intents →</a>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <div className="text-2xl font-bold">{hasAssistant ? '1' : '0'}</div>
-            <p className="text-xs text-muted-foreground">Active Assistant</p>
+            <div className="text-2xl font-bold">{currentAssistant ? "1" : "0"}</div>
+            <p className="text-xs text-muted-foreground">Active assistant</p>
           </CardContent>
         </Card>
       </div>
     </div>
   )
 }
-

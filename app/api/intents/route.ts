@@ -1,22 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
+import { syncOrgIntentsToVapi } from '@/lib/vapi-update-assistant'
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
+    const supabase = await createClient()
     const { data: intents, error } = await supabase
       .from('intents')
       .select('*')
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -39,9 +40,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -51,22 +51,24 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { intent_name, example_user_phrases, english_responses, russian_responses } = body
 
-    // Validate required fields
-    if (!intent_name || !example_user_phrases || !english_responses || !russian_responses) {
+    // Validate required fields (russian_responses optional, defaults to [])
+    if (!intent_name || !example_user_phrases || !english_responses) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       )
     }
 
+    const supabase = await createClient()
     const { data: intent, error } = await supabase
       .from('intents')
       .insert({
-        user_id: userId,
+        organisation_id: userAndOrg.organisationId,
+        user_id: userAndOrg.userId,
         intent_name,
         example_user_phrases,
         english_responses,
-        russian_responses,
+        russian_responses: russian_responses ?? [],
       })
       .select()
       .single()
@@ -78,6 +80,8 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       )
     }
+
+    await syncOrgIntentsToVapi(userAndOrg.organisationId, supabase)
 
     return NextResponse.json({ intent }, { status: 201 })
   } catch (error) {

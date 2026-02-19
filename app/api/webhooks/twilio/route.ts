@@ -1,266 +1,242 @@
 /**
  * Twilio Webhook Handler for Incoming Calls
- * 
- * CRITICAL OWNERSHIP MODEL:
- * - Call ownership is determined by the CALLER's phone number (From field)
- * - NOT by the assistant number (To field)
- * - Lookup phone_numbers.phone_number = From to get user_id
- * - Multiple users MAY forward to the SAME assistant number
- * - Data must NEVER mix between users
- * 
- * FLOW:
- * 1. Twilio sends webhook when call arrives
- * 2. Extract From (caller) and To (assistant) phone numbers
- * 3. Lookup phone_numbers where phone_number = From
- * 4. Extract user_id, assistant_id, phone_number_id
- * 5. Reject call if no matching phone_number exists
- * 6. Start VAPI AI call session with metadata (user_id, assistant_id, phone_number_id)
+ *
+ * MULTI-TENANT: Call ownership is determined by the number that was CALLED (To = clinic number).
+ * - To = clinic number (the number customers dial) → lookup phone_numbers.phone_number = To
+ * - From = caller (customer) number
+ * - Lookup returns organisation_id; we inject org's intents + voice agent into Vapi.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseService } from "@/lib/supabase/service";
+import { buildTransientAssistant } from "@/lib/vapi-call";
+import { fetchVapiAssistantVoiceConfig } from "@/lib/vapi-fetch-assistant";
 import https from "https";
 
 interface TwilioWebhookBody {
-  From: string; // Caller's phone number (clinic number)
-  To: string; // Assistant phone number (may be shared)
+  From: string;
+  To: string;
   CallSid: string;
   CallStatus: string;
   [key: string]: string;
 }
 
+/** Normalise to E.164 for lookup (Twilio usually sends E.164 already). */
+function normalizeE164(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length >= 10 && !phone.startsWith("+")) {
+    return "+" + (digits.length === 10 ? "1" + digits : digits);
+  }
+  return phone.startsWith("+") ? phone : "+" + phone;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    // Parse Twilio webhook body
     const formData = await req.formData();
     const body: TwilioWebhookBody = {
-      From: formData.get("From") as string,
-      To: formData.get("To") as string,
-      CallSid: formData.get("CallSid") as string,
-      CallStatus: formData.get("CallStatus") as string,
+      From: (formData.get("From") as string) ?? "",
+      To: (formData.get("To") as string) ?? "",
+      CallSid: (formData.get("CallSid") as string) ?? "",
+      CallStatus: (formData.get("CallStatus") as string) ?? "",
     };
 
-    // Extract phone numbers
-    const callerPhoneNumber = body.From; // This is the clinic number
-    const assistantPhoneNumber = body.To; // This is the assistant number
+    const callerNumber = body.From;
+    const clinicNumber = normalizeE164(body.To);
 
-    console.log(`[Twilio Webhook] Incoming call from ${callerPhoneNumber} to ${assistantPhoneNumber}`);
+    console.log(`[Twilio] Incoming call To=${clinicNumber} (clinic) From=${callerNumber} (caller)`);
 
-    // CRITICAL: Lookup user_id by caller's phone number (From field)
-    // This is the SINGLE source of truth for call ownership
-    const { data: phoneNumberRecord, error: lookupError } = await supabase
+    const supabase = getSupabaseService();
+
+    const { data: phoneRow, error: lookupError } = await supabase
       .from("phone_numbers")
-      .select("id, user_id, assistant_id, vapi_assistant_id, phone_number")
-      .eq("phone_number", callerPhoneNumber)
+      .select(
+        "id, organisation_id, user_id, assistant_id, vapi_assistant_id, vapi_phone_number_id, phone_number"
+      )
+      .eq("phone_number", clinicNumber)
       .eq("is_active", true)
-      .single();
+      .maybeSingle();
 
-    if (lookupError || !phoneNumberRecord) {
+    if (lookupError || !phoneRow) {
       console.error(
-        `[Twilio Webhook] No active phone number found for caller: ${callerPhoneNumber}`,
+        "[Twilio] No active phone number for clinic number:",
+        clinicNumber,
         lookupError
       );
-      
-      // Reject the call - return TwiML to hang up
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Sorry, this number is not registered. Goodbye.</Say>
-  <Hangup/>
-</Response>`,
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "text/xml",
-          },
-        }
+      return twimlResponse(
+        "Sorry, this number is not registered. Goodbye."
       );
     }
 
-    const { user_id, assistant_id, vapi_assistant_id, id: phone_number_id } = phoneNumberRecord;
+    const organisationId = phoneRow.organisation_id ?? null;
+    const phoneNumberId = phoneRow.id;
+    const vapiPhoneNumberId =
+      phoneRow.vapi_phone_number_id ?? phoneRow.vapi_phone_number_id;
 
-    console.log(
-      `[Twilio Webhook] Found owner: user_id=${user_id}, assistant_id=${assistant_id}, phone_number_id=${phone_number_id}`
+    if (!organisationId) {
+      console.error("[Twilio] Phone number has no organisation_id:", phoneRow.id);
+      return twimlResponse(
+        "Sorry, this number is not configured. Goodbye."
+      );
+    }
+
+    const { data: org } = await supabase
+      .from("organisations")
+      .select("id, selected_voice_agent_id")
+      .eq("id", organisationId)
+      .single();
+
+    const voiceAgentId = org?.selected_voice_agent_id ?? null;
+
+    const { data: intents } = await supabase
+      .from("intents")
+      .select("intent_name, example_user_phrases, english_responses, russian_responses")
+      .eq("organisation_id", organisationId)
+      .order("created_at", { ascending: true });
+
+    // Fetch the assistant from VAPI so the voice matches (predefined or custom-created)
+    let fetchedVoiceConfig = null;
+    if (voiceAgentId) {
+      fetchedVoiceConfig = await fetchVapiAssistantVoiceConfig(voiceAgentId);
+    }
+
+    // Always use a transient assistant with org intents; voice from VAPI so it sounds like the selected agent
+    const assistantConfig = buildTransientAssistant(
+      voiceAgentId,
+      (intents ?? []) as {
+        intent_name: string;
+        example_user_phrases: string[];
+        english_responses: string[];
+        russian_responses: string[];
+      }[],
+      fetchedVoiceConfig ?? undefined
     );
 
-    // Verify assistant exists and belongs to user
-    if (!vapi_assistant_id) {
-      console.error(
-        `[Twilio Webhook] Phone number ${callerPhoneNumber} has no assistant configured`
-      );
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Sorry, no assistant is configured for this number. Goodbye.</Say>
-  <Hangup/>
-</Response>`,
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "text/xml",
-          },
-        }
-      );
-    }
-
-    // Start VAPI AI call session with metadata
-    // This metadata will be passed to VAPI callback so we can store call data with correct user_id
     const vapiApiKey = process.env.VAPI_API_KEY;
     if (!vapiApiKey) {
-      console.error("[Twilio Webhook] VAPI_API_KEY not configured");
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Service temporarily unavailable. Please try again later.</Say>
-  <Hangup/>
-</Response>`,
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "text/xml",
-          },
-        }
+      console.error("[Twilio] VAPI_API_KEY not set");
+      return twimlResponse(
+        "Service temporarily unavailable. Please try again later."
       );
     }
 
-    // Create VAPI call with metadata
-    // The metadata is CRITICAL - it contains user_id so callbacks can store data correctly
-    // NOTE: Verify VAPI API format - this may need adjustment based on actual VAPI API
-    const vapiCallData = {
-      phoneNumberId: assistantPhoneNumber, // The assistant number (To field) - may need to be VAPI phone number ID
-      customer: {
-        number: callerPhoneNumber, // The caller's clinic number (From field)
-      },
-      assistantId: vapi_assistant_id,
+    const payload = {
+      type: "inboundPhoneCall",
+      assistant: assistantConfig,
+      customer: { number: callerNumber },
+      phoneNumberId: vapiPhoneNumberId || undefined,
       metadata: {
-        user_id: user_id, // CRITICAL: Pass user_id in metadata
-        assistant_id: assistant_id,
-        phone_number_id: phone_number_id,
-        caller_phone_number: callerPhoneNumber,
-        assistant_phone_number: assistantPhoneNumber,
+        organisation_id: organisationId,
+        phone_number_id: phoneNumberId,
+        caller_phone_number: callerNumber,
+        assistant_phone_number: clinicNumber,
         twilio_call_sid: body.CallSid,
       },
     };
 
-    console.log(`[Twilio Webhook] Starting VAPI call with metadata:`, JSON.stringify(vapiCallData.metadata));
+    const vapiResponse = await vapiPost("/v1/call", vapiApiKey, payload);
 
-    // Make request to VAPI to start the call
-    // NOTE: This endpoint format may need verification against VAPI API documentation
-    const vapiResponse = await new Promise<any>((resolve, reject) => {
-      const options = {
-        hostname: "api.vapi.ai",
-        port: 443,
-        path: "/v1/call",
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${vapiApiKey}`,
-          "Content-Type": "application/json",
-        },
-      };
-
-      const req = https.request(options, (res: any) => {
-        let data = "";
-        res.on("data", (chunk: any) => (data += chunk));
-        res.on("end", () => {
-          try {
-            const jsonData = JSON.parse(data);
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              resolve(jsonData);
-            } else {
-              reject(new Error(jsonData.message || `VAPI API error: ${res.statusCode}`));
-            }
-          } catch (parseError) {
-            reject(new Error("Failed to parse VAPI response"));
-          }
-        });
-      });
-
-      req.on("error", reject);
-      req.write(JSON.stringify(vapiCallData));
-      req.end();
-    });
-
-    console.log(`[Twilio Webhook] VAPI call started:`, vapiResponse.id);
-
-    // Store initial call record in database
-    const { error: callInsertError } = await supabase.from("calls").insert({
-      user_id: user_id, // CRITICAL: Store with correct user_id
-      phone_number_id: phone_number_id,
-      assistant_id: assistant_id,
-      vapi_call_id: vapiResponse.id,
-      caller_phone_number: callerPhoneNumber,
-      assistant_phone_number: assistantPhoneNumber,
-      call_status: "initiated",
-      started_at: new Date().toISOString(),
-      metadata: {
-        twilio_call_sid: body.CallSid,
-        vapi_response: vapiResponse,
-      },
-    });
-
-    if (callInsertError) {
-      console.error("[Twilio Webhook] Error storing call record:", callInsertError);
-      // Don't fail the webhook, but log the error
+    if (!vapiResponse?.id) {
+      console.error("[Twilio] Vapi create call failed:", vapiResponse);
+      return twimlResponse(
+        "We could not connect your call. Please try again later."
+      );
     }
 
-    // Return TwiML to connect the call
-    // VAPI will handle the actual call routing
-    return new NextResponse(
-      `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Connecting you now.</Say>
-</Response>`,
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "text/xml",
-        },
-      }
-    );
-  } catch (error: any) {
-    console.error("[Twilio Webhook] Error processing webhook:", error);
-    
-    // Return error response to Twilio
-    return new NextResponse(
-      `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">An error occurred. Please try again later.</Say>
-  <Hangup/>
-</Response>`,
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "text/xml",
-        },
-      }
+    await supabase.from("calls").insert({
+      organisation_id: organisationId,
+      user_id: phoneRow.user_id ?? null,
+      phone_number_id: phoneNumberId,
+      assistant_id: phoneRow.assistant_id ?? null,
+      vapi_call_id: vapiResponse.id,
+      caller_phone_number: callerNumber,
+      assistant_phone_number: clinicNumber,
+      call_status: "initiated",
+      started_at: new Date().toISOString(),
+      metadata: { twilio_call_sid: body.CallSid, vapi_response: vapiResponse },
+    });
+
+    return twimlResponse("Connecting you now.");
+  } catch (err: unknown) {
+    console.error("[Twilio] Error:", err);
+    return twimlResponse(
+      "An error occurred. Please try again later."
     );
   }
 }
 
-// Handle GET requests (Twilio status callbacks)
+function twimlResponse(say: string) {
+  return new NextResponse(
+    `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice">${say}</Say>
+  <Hangup/>
+</Response>`,
+    {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    }
+  );
+}
+
+function vapiPost(
+  path: string,
+  apiKey: string,
+  body: object
+): Promise<{ id?: string; [k: string]: unknown }> {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = https.request(
+      {
+        hostname: "api.vapi.ai",
+        port: 443,
+        path,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(data),
+        },
+      },
+      (res) => {
+        let buf = "";
+        res.on("data", (ch) => (buf += ch));
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(buf);
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(json);
+            } else {
+              reject(new Error(json.message || `Vapi ${res.statusCode}`));
+            }
+          } catch {
+            reject(new Error("Invalid Vapi response"));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(data);
+    req.end();
+  });
+}
+
 export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
   const callStatus = searchParams.get("CallStatus");
   const callSid = searchParams.get("CallSid");
 
-  console.log(`[Twilio Status Callback] Call ${callSid} status: ${callStatus}`);
+  console.log("[Twilio Status] Call", callSid, "status:", callStatus);
 
-  // Update call status if we have the call record
   if (callSid) {
-    const { error } = await supabase
+    const supabase = getSupabaseService();
+    await supabase
       .from("calls")
       .update({
         call_status: callStatus || "unknown",
         updated_at: new Date().toISOString(),
       })
       .eq("metadata->>twilio_call_sid", callSid);
-
-    if (error) {
-      console.error("[Twilio Status Callback] Error updating call:", error);
-    }
   }
 
   return NextResponse.json({ received: true });
 }
-

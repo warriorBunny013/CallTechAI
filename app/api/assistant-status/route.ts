@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { getCurrentUser } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const user = await getCurrentUser()
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -20,7 +19,7 @@ export async function GET(request: NextRequest) {
       const { data: settings, error } = await supabase
         .from('assistant_settings')
         .select('is_active')
-        .eq('user_id', userId)
+        .eq('user_id', user.id)
         .single()
 
       if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
@@ -49,9 +48,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const user = await getCurrentUser()
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -75,7 +73,7 @@ export async function POST(request: NextRequest) {
       const { data, error } = await supabase
         .from('assistant_settings')
         .upsert({ 
-          user_id: userId,
+          user_id: user.id,
           is_active: isActive,
           updated_at: new Date().toISOString()
         }, {

@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { VapiClient } from '@vapi-ai/server-sdk'
 import { createAssistantConfig } from '@/lib/vapi'
 import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { getCurrentUser } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const user = await getCurrentUser()
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -29,7 +28,7 @@ export async function POST(request: NextRequest) {
     const { data: intents, error: intentsError } = await supabase
       .from('intents')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', user.id)
       .in('id', intentIds)
 
     if (intentsError || !intents || intents.length === 0) {
@@ -121,7 +120,7 @@ Instructions:
     const { data: savedAssistant, error: dbError } = await supabase
       .from('assistants')
       .insert({
-        user_id: userId,
+        user_id: user.id,
         vapi_assistant_id: vapiAssistant.id,
         name: name || voiceAgent?.name || 'CallTechAI Assistant',
         config: {
