@@ -13,54 +13,63 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle } from "lucide-react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Switch } from "@/components/ui/switch"
 
 interface PhoneNumber {
   id: string
-  user_id?: string
-  organisation_id?: string
+  user_id: string
   vapi_phone_number_id: string
   phone_number: string
   country_code: string
-  number_type: 'free' | 'imported'
+  number_type: string
   assistant_id?: string
   vapi_assistant_id?: string
-  twilio_account_sid?: string | null
-  twilio_auth_token?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
 }
 
+interface Assistant {
+  id: string
+  vapi_assistant_id: string
+  name: string
+}
+
 export default function PhoneNumbersPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
+  const [assistants, setAssistants] = useState<Assistant[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
+  const [isConfiguring, setIsConfiguring] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
-  const [activeTab, setActiveTab] = useState<'vapi' | 'twilio'>('vapi')
+  const [numberType, setNumberType] = useState<'free' | 'imported'>('free')
 
-  // Form state: Vapi free number
-  const [vapiFormData, setVapiFormData] = useState({
-    areaCode: '415',
-    countryCode: 'US',
+  // Form state for free number
+  const [freeNumberData, setFreeNumberData] = useState({
+    countryCode: 'US'
   })
 
-  // Form state: Twilio import
-  const [twilioFormData, setTwilioFormData] = useState({
-    phoneNumber: '',
+  // Form state for imported number
+  const [importNumberData, setImportNumberData] = useState({
     twilioAccountSid: '',
     twilioAuthToken: '',
-    smsEnabled: true,
-    label: '',
+    twilioPhoneNumberSid: ''
   })
 
   useEffect(() => {
     fetchPhoneNumbers()
+    fetchAssistants()
   }, [])
 
   const fetchPhoneNumbers = async () => {
@@ -84,97 +93,161 @@ export default function PhoneNumbersPage() {
     }
   }
 
-  const handleAddVapiNumber = async () => {
+  const fetchAssistants = async () => {
+    try {
+      const response = await fetch('/api/assistants')
+      if (response.ok) {
+        const data = await response.json()
+        setAssistants(data.assistants || [])
+      }
+    } catch (error) {
+      console.error('Error fetching assistants:', error)
+    }
+  }
+
+  const handleCreateFreeNumber = async () => {
     try {
       setIsCreating(true)
       const response = await fetch('/api/phone-numbers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          type: 'vapi',
-          areaCode: vapiFormData.areaCode,
-          countryCode: vapiFormData.countryCode,
+          numberType: 'free',
+          countryCode: freeNumberData.countryCode
         }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to add phone number')
+        throw new Error(data.error || 'Failed to create phone number')
       }
 
       toast({
-        title: 'Success',
-        description: 'Inbound calls will use your organisation’s voice agent.',
+        title: "Success",
+        description: "Phone number created successfully!",
       })
+
       setIsDialogOpen(false)
-      setVapiFormData({ areaCode: '415', countryCode: 'US' })
+      setFreeNumberData({ countryCode: 'US' })
       fetchPhoneNumbers()
-    } catch (error: unknown) {
-      console.error('Error adding phone number:', error)
+    } catch (error: any) {
+      console.error('Error creating phone number:', error)
       toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to add phone number. Please try again.',
-        variant: 'destructive',
+        title: "Error",
+        description: error.message || "Failed to create phone number. Please try again.",
+        variant: "destructive",
       })
     } finally {
       setIsCreating(false)
     }
   }
 
-  const handleImportTwilio = async () => {
-    if (!twilioFormData.phoneNumber || !twilioFormData.twilioAccountSid) {
-      toast({
-        title: 'Error',
-        description: 'Phone number and Twilio Account SID are required.',
-        variant: 'destructive',
-      })
-      return
-    }
-
+  const handleImportNumber = async () => {
     try {
       setIsCreating(true)
       const response = await fetch('/api/phone-numbers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          type: 'twilio',
-          phoneNumber: twilioFormData.phoneNumber,
-          twilioAccountSid: twilioFormData.twilioAccountSid,
-          twilioAuthToken: twilioFormData.twilioAuthToken || undefined,
-          smsEnabled: twilioFormData.smsEnabled,
-          label: twilioFormData.label || undefined,
+          numberType: 'imported',
+          twilioAccountSid: importNumberData.twilioAccountSid,
+          twilioAuthToken: importNumberData.twilioAuthToken,
+          twilioPhoneNumberSid: importNumberData.twilioPhoneNumberSid
         }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to import Twilio number')
+        throw new Error(data.error || 'Failed to import phone number')
       }
 
       toast({
-        title: 'Success',
-        description: 'Twilio number imported into Vapi. Inbound calls will use your organisation’s voice agent.',
+        title: "Success",
+        description: "Phone number imported successfully!",
       })
-      setIsDialogOpen(false)
-      setTwilioFormData({
-        phoneNumber: '',
+
+      setIsImportDialogOpen(false)
+      setImportNumberData({
         twilioAccountSid: '',
         twilioAuthToken: '',
-        smsEnabled: true,
-        label: '',
+        twilioPhoneNumberSid: ''
       })
       fetchPhoneNumbers()
-    } catch (error: unknown) {
-      console.error('Error importing Twilio number:', error)
+    } catch (error: any) {
+      console.error('Error importing phone number:', error)
       toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to import Twilio number. Please try again.',
-        variant: 'destructive',
+        title: "Error",
+        description: error.message || "Failed to import phone number. Please try again.",
+        variant: "destructive",
       })
     } finally {
       setIsCreating(false)
+    }
+  }
+
+  const handleConfigureAssistant = async (phoneNumberId: string, vapiAssistantId: string, assistantId?: string) => {
+    try {
+      setIsConfiguring(phoneNumberId)
+      
+      // Use launch endpoint for better integration
+      if (assistantId) {
+        const launchResponse = await fetch('/api/assistants/launch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            phoneNumberId,
+            assistantId
+          }),
+        })
+
+        if (!launchResponse.ok) {
+          throw new Error('Failed to launch assistant')
+        }
+
+        toast({
+          title: "🎉 Assistant Launched!",
+          description: "Your phone number is now active and ready to receive calls!",
+        })
+      } else {
+        // Fallback to update endpoint
+        const response = await fetch(`/api/phone-numbers/${phoneNumberId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            vapiAssistantId
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to configure assistant')
+        }
+
+        toast({
+          title: "Success",
+          description: "Assistant configured successfully! Inbound calls will now use this assistant.",
+        })
+      }
+
+      fetchPhoneNumbers()
+    } catch (error) {
+      console.error('Error configuring assistant:', error)
+      toast({
+        title: "Error",
+        description: "Failed to configure assistant. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsConfiguring(null)
     }
   }
 
@@ -213,18 +286,30 @@ export default function PhoneNumbersPage() {
       <Toaster />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Clinic Phone Numbers</h1>
+          <h1 className="text-3xl font-bold">Phone Numbers</h1>
           <p className="text-muted-foreground mt-2">
-            import your existing Twilio number. Customers call this number; inbound calls use your organisation’s voice agent and intents.
+            Manage your phone numbers for inbound and outbound calls
           </p>
         </div>
-        <Button
-          onClick={() => setIsDialogOpen(true)}
-          className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Clinic Number
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => {
+              setNumberType('free')
+              setIsDialogOpen(true)
+            }}
+            className="bg-rose-500 hover:bg-rose-600"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Create Free Number
+          </Button>
+          <Button
+            onClick={() => setIsImportDialogOpen(true)}
+            variant="outline"
+          >
+            <Phone className="h-4 w-4 mr-2" />
+            Import from Twilio
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -235,16 +320,19 @@ export default function PhoneNumbersPage() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Phone className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No clinic numbers yet</h3>
+            <h3 className="text-lg font-semibold mb-2">No phone numbers yet</h3>
             <p className="text-muted-foreground text-center mb-4">
-              import your existing Twilio number. Customers will call this number; inbound calls use your organisation’s voice agent and intents.
+              Get started by creating a free US phone number or importing one from Twilio
             </p>
             <Button
-              onClick={() => setIsDialogOpen(true)}
-              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
+              onClick={() => {
+                setNumberType('free')
+                setIsDialogOpen(true)
+              }}
+              className="bg-rose-500 hover:bg-rose-600"
             >
               <Plus className="h-4 w-4 mr-2" />
-              Add Your First Clinic Number
+              Create Your First Number
             </Button>
           </CardContent>
         </Card>
@@ -256,8 +344,7 @@ export default function PhoneNumbersPage() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
                     <Phone className="h-5 w-5" />
-                    <span>{phone.phone_number}</span>
-                    <Badge variant="outline" className="font-normal text-muted-foreground">Clinic number</Badge>
+                    {phone.phone_number}
                   </CardTitle>
                   {phone.is_active ? (
                     <Badge variant="default" className="bg-green-500">
@@ -272,17 +359,64 @@ export default function PhoneNumbersPage() {
                   )}
                 </div>
                 <CardDescription>
-                  {phone.number_type === 'free' ? 'Vapi free US number' : 'Imported Twilio number'} · Calls use your organisation’s voice agent
+                  {phone.number_type === 'free' ? 'Free US Number' : 'Imported from Twilio'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <Label className="text-sm font-medium">Country</Label>
+                  <Label className="text-sm font-medium">Country Code</Label>
                   <p className="text-sm text-muted-foreground">{phone.country_code}</p>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Inbound calls to this number are answered by your organisation’s selected voice agent and intents. Set the voice in <a href="/dashboard/assistants" className="underline">Assistants</a>.
-                </p>
+
+                {phone.vapi_assistant_id ? (
+                  <div>
+                    <Label className="text-sm font-medium">Assistant</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {assistants.find(a => a.vapi_assistant_id === phone.vapi_assistant_id)?.name || 'Configured'}
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <Label className="text-sm font-medium mb-2 block">Launch Assistant</Label>
+                    <Select
+                      onValueChange={(value) => {
+                        const assistant = assistants.find(a => a.vapi_assistant_id === value)
+                        if (assistant) {
+                          handleConfigureAssistant(phone.id, value, assistant.id)
+                        }
+                      }}
+                      disabled={isConfiguring === phone.id || assistants.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select assistant to launch" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {assistants.length === 0 ? (
+                          <SelectItem value="none" disabled>
+                            No assistants available. Create one first.
+                          </SelectItem>
+                        ) : (
+                          assistants.map((assistant) => (
+                            <SelectItem key={assistant.id} value={assistant.vapi_assistant_id}>
+                              {assistant.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {isConfiguring === phone.id ? (
+                        <span className="flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Launching...
+                        </span>
+                      ) : (
+                        "Select an assistant to activate this phone number"
+                      )}
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex gap-2 pt-2">
                   <Button
                     variant="destructive"
@@ -300,162 +434,117 @@ export default function PhoneNumbersPage() {
         </div>
       )}
 
-      {/* Add clinic number dialog with tabs */}
-      <Dialog 
-        open={isDialogOpen} 
-        onOpenChange={(open) => {
-          setIsDialogOpen(open)
-          if (!open) {
-            // Reset form state when dialog closes
-            setActiveTab('vapi')
-            setVapiFormData({ areaCode: '415', countryCode: 'US' })
-            setTwilioFormData({
-              phoneNumber: '',
-              twilioAccountSid: '',
-              twilioAuthToken: '',
-              smsEnabled: true,
-              label: '',
-            })
-          }
-        }}
-      >
-        <DialogContent className="max-w-2xl">
+      {/* Create Free Number Dialog */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add clinic number</DialogTitle>
+            <DialogTitle>Create Free US Phone Number</DialogTitle>
             <DialogDescription>
-              Import your existing Twilio number. Both will be connected to Vapi so inbound calls use your organisation’s voice agent.
+              Create a free phone number for US national use. You can create up to 10 free numbers per account.
             </DialogDescription>
           </DialogHeader>
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'vapi' | 'twilio')} className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              {/* <TabsTrigger value="vapi">Free Vapi Number</TabsTrigger> */}
-              <TabsTrigger value="twilio">Import Twilio</TabsTrigger>
-            </TabsList>
-            
-            <TabsContent value="vapi" className="space-y-4 py-4">
-              <div>
-                <Label>Area code (US, 3 digits)</Label>
-                <Input
-                  placeholder="e.g. 415"
-                  value={vapiFormData.areaCode}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\D/g, '').slice(0, 3)
-                    setVapiFormData((prev) => ({ ...prev, areaCode: v || '415' }))
-                  }}
-                  maxLength={3}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Vapi will assign a free number in this area code. US only.
-                </p>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleAddVapiNumber}
-                  disabled={isCreating}
-                  className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  {isCreating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    'Create free number'
-                  )}
-                </Button>
-              </DialogFooter>
-            </TabsContent>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>Country Code</Label>
+              <Select
+                value={freeNumberData.countryCode}
+                onValueChange={(value) => setFreeNumberData({ countryCode: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="US">United States (US)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Free numbers are only available for US national use
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateFreeNumber}
+              disabled={isCreating}
+              className="bg-rose-500 hover:bg-rose-600"
+            >
+              {isCreating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                'Create Number'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-            <TabsContent value="twilio" className="space-y-4 py-4">
-              <div>
-                <Label>Twilio Phone Number (E.164 format)</Label>
-                <Input
-                  placeholder="+14155551234"
-                  value={twilioFormData.phoneNumber}
-                  onChange={(e) => {
-                    const v = e.target.value.replace(/\s+/g, '')
-                    setTwilioFormData((prev) => ({ ...prev, phoneNumber: v }))
-                  }}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  The phone number you own on Twilio (e.g., +14155551234)
-                </p>
-              </div>
-              <div>
-                <Label>Twilio Account SID *</Label>
-                <Input
-                  placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                  value={twilioFormData.twilioAccountSid}
-                  onChange={(e) =>
-                    setTwilioFormData((prev) => ({ ...prev, twilioAccountSid: e.target.value }))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Found in your Twilio Console → Account → API Keys & Tokens
-                </p>
-              </div>
-              <div>
-                <Label>Twilio Auth Token</Label>
-                <Input
-                  type="password"
-                  placeholder="Your Twilio auth token (optional)"
-                  value={twilioFormData.twilioAuthToken}
-                  onChange={(e) =>
-                    setTwilioFormData((prev) => ({ ...prev, twilioAuthToken: e.target.value }))
-                  }
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Optional. If not provided, Vapi will use your Vapi account’s Twilio credentials.
-                </p>
-              </div>
-              <div>
-                <Label>Label (optional)</Label>
-                <Input
-                  placeholder="Label for phone number"
-                  value={twilioFormData.label}
-                  onChange={(e) =>
-                    setTwilioFormData((prev) => ({ ...prev, label: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label>Enable SMS</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Enable SMS messaging for this phone number
-                  </p>
-                </div>
-                <Switch
-                  checked={twilioFormData.smsEnabled}
-                  onCheckedChange={(checked) =>
-                    setTwilioFormData((prev) => ({ ...prev, smsEnabled: checked }))
-                  }
-                />
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleImportTwilio}
-                  disabled={isCreating}
-                  className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-                >
-                  {isCreating ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Importing...
-                    </>
-                  ) : (
-                    'Import from Twilio'
-                  )}
-                </Button>
-              </DialogFooter>
-            </TabsContent>
-          </Tabs>
+      {/* Import Number Dialog */}
+      <Dialog open={isImportDialogOpen} onOpenChange={setIsImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Phone Number from Twilio</DialogTitle>
+            <DialogDescription>
+              Import your existing Twilio phone number for international or custom use.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>Twilio Account SID</Label>
+              <Input
+                value={importNumberData.twilioAccountSid}
+                onChange={(e) =>
+                  setImportNumberData({ ...importNumberData, twilioAccountSid: e.target.value })
+                }
+                placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              />
+            </div>
+            <div>
+              <Label>Twilio Auth Token</Label>
+              <Input
+                type="password"
+                value={importNumberData.twilioAuthToken}
+                onChange={(e) =>
+                  setImportNumberData({ ...importNumberData, twilioAuthToken: e.target.value })
+                }
+                placeholder="Your Twilio auth token"
+              />
+            </div>
+            <div>
+              <Label>Twilio Phone Number SID</Label>
+              <Input
+                value={importNumberData.twilioPhoneNumberSid}
+                onChange={(e) =>
+                  setImportNumberData({ ...importNumberData, twilioPhoneNumberSid: e.target.value })
+                }
+                placeholder="PNxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsImportDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImportNumber}
+              disabled={isCreating}
+              className="bg-rose-500 hover:bg-rose-600"
+            >
+              {isCreating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                'Import Number'
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
