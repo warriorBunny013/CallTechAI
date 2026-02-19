@@ -1,26 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-import { auth } from '@clerk/nextjs/server'
+import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserAndOrg } from '@/lib/org'
 import { VapiClient } from '@vapi-ai/server-sdk'
 import { createAssistantConfig } from '@/lib/vapi'
 
 // POST: Create a default assistant for a new user
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-
-    if (!userId) {
+    const userAndOrg = await getCurrentUserAndOrg()
+    if (!userAndOrg) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
-    // Check if user already has an assistant
+    const supabase = await createClient()
+
+    // Check if org already has an assistant
     const { data: existingAssistants } = await supabase
       .from('assistants')
       .select('id')
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
       .limit(1)
 
     if (existingAssistants && existingAssistants.length > 0) {
@@ -30,11 +31,11 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Get user's intents
+    // Get org's intents
     const { data: intents, error: intentsError } = await supabase
       .from('intents')
       .select('*')
-      .eq('user_id', userId)
+      .eq('organisation_id', userAndOrg.organisationId)
 
     if (intentsError) {
       console.error('Error fetching intents:', intentsError)
@@ -65,7 +66,8 @@ export async function POST(request: NextRequest) {
     const { data: savedAssistant, error: dbError } = await supabase
       .from('assistants')
       .insert({
-        user_id: userId,
+        organisation_id: userAndOrg.organisationId,
+        user_id: userAndOrg.userId,
         vapi_assistant_id: vapiAssistant.id,
         name: assistantConfig.name,
         config: assistantConfig,
