@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
-import { supabase } from "@/lib/supabase";
-import { getCurrentUser } from "@/lib/auth";
+import { getSupabaseService } from "@/lib/supabase/service";
+import { getCurrentUserAndOrg } from "@/lib/org";
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
+    const userAndOrg = await getCurrentUserAndOrg();
 
-    if (!user) {
+    if (!userAndOrg) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const supabase = getSupabaseService();
 
     let sessionId;
     try {
@@ -67,17 +69,25 @@ export async function POST(req: NextRequest) {
         original_end: (subscription as any).current_period_end
       });
 
+      const rawCycle =
+        (session.metadata?.billingCycle as string) ||
+        subscription.items.data[0]?.price?.recurring?.interval ||
+        "monthly";
+      const billingCycle =
+        rawCycle === "year" ? "yearly" : rawCycle === "month" ? "monthly" : rawCycle;
+
       // Update the subscription record
       const { data, error } = await supabase
         .from("subscriptions")
         .upsert(
           {
-            user_id: user.id,
+            user_id: userAndOrg.userId,
+            organisation_id: userAndOrg.organisationId,
             stripe_customer_id: session.customer as string,
             stripe_subscription_id: subscription.id,
             status: subscription.status,
             plan_type: "basic",
-            billing_cycle: subscription.items.data[0]?.price?.recurring?.interval || "monthly",
+            billing_cycle: billingCycle,
             current_period_start: currentPeriodStart.toISOString(),
             current_period_end: currentPeriodEnd.toISOString(),
           },
