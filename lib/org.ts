@@ -41,6 +41,26 @@ export async function getCurrentUserAndOrg(): Promise<{
 }
 
 /**
+ * Get organisation_id for a user using service role (for webhooks, no session).
+ */
+export async function getOrganisationIdForUserService(
+  userId: string
+): Promise<string | null> {
+  const { getSupabaseService } = await import("@/lib/supabase/service");
+  const supabase = getSupabaseService();
+  const { data, error } = await supabase
+    .from("organisation_members")
+    .select("organisation_id")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .single();
+
+  if (error || !data) return null;
+  return data.organisation_id as string;
+}
+
+/**
  * Ensure the current user has access to the given organisation (is a member).
  */
 export async function userBelongsToOrganisation(
