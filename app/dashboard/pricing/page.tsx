@@ -71,9 +71,13 @@ export default function PricingPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h1 className="text-3xl font-bold tracking-tight">Choose Your Plan</h1>
+        <h1 className="text-3xl font-bold tracking-tight">
+          {hasActiveSubscription ? "Current Plan" : "Choose Your Plan"}
+        </h1>
         <p className="text-muted-foreground mt-2">
-          Get started with CallTechAI's powerful voice assistant platform
+          {hasActiveSubscription
+            ? "Your active subscription details"
+            : "Get started with CallTechAI's powerful voice assistant platform"}
         </p>
       </div>
 

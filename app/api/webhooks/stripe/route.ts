@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseService } from "@/lib/supabase/service";
+import { getOrganisationIdForUserService } from "@/lib/org";
 import Stripe from "stripe";
 
 export async function POST(req: NextRequest) {
@@ -73,51 +74,61 @@ async function handleCheckoutSessionCompleted(
     return;
   }
 
-  const { userId, plan, billingCycle } = metadata;
+  const { userId, organisationId: metaOrgId, plan, billingCycle } = metadata;
 
   if (!userId) {
     console.error("No userId in metadata");
     return;
   }
 
-  console.log(`Processing checkout for user: ${userId}`);
+  const organisationId =
+    metaOrgId ?? (await getOrganisationIdForUserService(userId));
+
+  if (!organisationId) {
+    console.error("No organisationId for user:", userId);
+    return;
+  }
+
+  console.log(`Processing checkout for user: ${userId}, org: ${organisationId}`);
+
+  const supabase = getSupabaseService();
 
   if (session.subscription && typeof session.subscription === "string") {
     try {
-      // Retrieve full subscription details from Stripe
       const subscription = await stripe.subscriptions.retrieve(
         session.subscription,
       );
 
       console.log(`Subscription retrieved: ${subscription.id}`);
 
-      // Calculate period dates - use current time as fallback for test environment
       const now = new Date();
-      const currentPeriodStart = (subscription as any).current_period_start 
+      const currentPeriodStart = (subscription as any).current_period_start
         ? new Date((subscription as any).current_period_start * 1000)
         : now;
-      
-      const currentPeriodEnd = (subscription as any).current_period_end 
+      const currentPeriodEnd = (subscription as any).current_period_end
         ? new Date((subscription as any).current_period_end * 1000)
-        : new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30 days from now as fallback
+        : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-      // Upsert (insert or update) the subscription record
       const { data, error } = await supabase
         .from("subscriptions")
         .upsert(
           {
             user_id: userId,
+            organisation_id: organisationId,
             stripe_customer_id: session.customer as string,
             stripe_subscription_id: subscription.id,
             status: subscription.status,
             plan_type: plan || "basic",
-            billing_cycle: billingCycle || "monthly",
+            billing_cycle:
+              billingCycle === "year"
+                ? "yearly"
+                : billingCycle === "month"
+                  ? "monthly"
+                  : billingCycle || "monthly",
             current_period_start: currentPeriodStart.toISOString(),
             current_period_end: currentPeriodEnd.toISOString(),
           },
-          {
-            onConflict: "user_id", // Update if user_id already exists
-          },
+          { onConflict: "user_id" },
         )
         .select();
 
@@ -140,48 +151,61 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
   try {
     console.log(`Creating subscription: ${subscription.id}`);
 
-    // Get customer details to find user_id
-    const customer = await stripe.customers.retrieve(subscription.customer as string);
-    
+    const customer = await stripe.customers.retrieve(
+      subscription.customer as string,
+    );
+
     if (!customer || customer.deleted) {
       console.error("Customer not found for subscription:", subscription.id);
       return;
     }
 
-    const userId = (customer as any).metadata?.userId;
-    
+    const meta = (customer as any).metadata ?? {};
+    const userId = meta.userId;
+    const organisationId =
+      meta.organisationId ?? (await getOrganisationIdForUserService(userId));
+
     if (!userId) {
-      console.error("No userId found in customer metadata for subscription:", subscription.id);
+      console.error(
+        "No userId found in customer metadata for subscription:",
+        subscription.id,
+      );
       return;
     }
 
-    // Calculate period dates - use current time as fallback for test environment
+    if (!organisationId) {
+      console.error("No organisationId for user:", userId);
+      return;
+    }
+
     const now = new Date();
-    const currentPeriodStart = (subscription as any).current_period_start 
+    const currentPeriodStart = (subscription as any).current_period_start
       ? new Date((subscription as any).current_period_start * 1000)
       : now;
-    
-    const currentPeriodEnd = (subscription as any).current_period_end 
+    const currentPeriodEnd = (subscription as any).current_period_end
       ? new Date((subscription as any).current_period_end * 1000)
-      : new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30 days from now as fallback
+      : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // Upsert subscription record
+    const supabase = getSupabaseService();
     const { data, error } = await supabase
       .from("subscriptions")
       .upsert(
         {
           user_id: userId,
+          organisation_id: organisationId,
           stripe_customer_id: subscription.customer as string,
           stripe_subscription_id: subscription.id,
           status: subscription.status,
-          plan_type: "basic", // Default plan type
-          billing_cycle: subscription.items.data[0]?.price?.recurring?.interval || "monthly",
+          plan_type: "basic",
+          billing_cycle: (() => {
+            const i =
+              subscription.items.data[0]?.price?.recurring?.interval || "month";
+            return i === "year" ? "yearly" : i === "month" ? "monthly" : "monthly";
+          })(),
           current_period_start: currentPeriodStart.toISOString(),
           current_period_end: currentPeriodEnd.toISOString(),
         },
-        {
-          onConflict: "user_id",
-        },
+        { onConflict: "user_id" },
       )
       .select();
 
@@ -200,16 +224,15 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   try {
     console.log(`Updating subscription: ${subscription.id}`);
 
-    // Calculate period dates - use current time as fallback for test environment
     const now = new Date();
-    const currentPeriodStart = (subscription as any).current_period_start 
+    const currentPeriodStart = (subscription as any).current_period_start
       ? new Date((subscription as any).current_period_start * 1000)
       : now;
-    
-    const currentPeriodEnd = (subscription as any).current_period_end 
+    const currentPeriodEnd = (subscription as any).current_period_end
       ? new Date((subscription as any).current_period_end * 1000)
-      : new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000)); // 30 days from now as fallback
+      : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+    const supabase = getSupabaseService();
     const { data, error } = await supabase
       .from("subscriptions")
       .update({
@@ -235,6 +258,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   try {
     console.log(`Deleting subscription: ${subscription.id}`);
 
+    const supabase = getSupabaseService();
     const { data, error } = await supabase
       .from("subscriptions")
       .update({
@@ -261,6 +285,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
     if (subscriptionId && typeof subscriptionId === "string") {
       console.log(`Payment succeeded for subscription: ${subscriptionId}`);
 
+      const supabase = getSupabaseService();
       const { data, error } = await supabase
         .from("subscriptions")
         .update({
@@ -288,6 +313,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice) {
     if (subscriptionId && typeof subscriptionId === "string") {
       console.log(`Payment failed for subscription: ${subscriptionId}`);
 
+      const supabase = getSupabaseService();
       const { data, error } = await supabase
         .from("subscriptions")
         .update({

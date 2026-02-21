@@ -14,6 +14,8 @@ interface Subscription {
 interface CachedSubscription {
   canAccess: boolean;
   hasActiveSubscription: boolean;
+  trialEnded: boolean;
+  subscriptionExpired: boolean;
   trialEndsAt: string | null;
   subscription: Subscription | null;
   fetchedAt: number;
@@ -22,6 +24,8 @@ interface CachedSubscription {
 interface UseSubscriptionReturn {
   hasActiveSubscription: boolean;
   canAccess: boolean;
+  trialEnded: boolean;
+  subscriptionExpired: boolean;
   trialEndsAt: string | null;
   subscription: Subscription | null;
   loading: boolean;
@@ -62,6 +66,10 @@ export function useSubscription(): UseSubscriptionReturn {
     cached?.hasActiveSubscription ?? false
   );
   const [canAccess, setCanAccess] = useState(cached?.canAccess ?? false);
+  const [trialEnded, setTrialEnded] = useState(cached?.trialEnded ?? false);
+  const [subscriptionExpired, setSubscriptionExpired] = useState(
+    cached?.subscriptionExpired ?? false
+  );
   const [trialEndsAt, setTrialEndsAt] = useState<string | null>(
     cached?.trialEndsAt ?? null
   );
@@ -83,6 +91,8 @@ export function useSubscription(): UseSubscriptionReturn {
       if (response.status === 401) {
         setHasActiveSubscription(false);
         setCanAccess(false);
+        setTrialEnded(false);
+        setSubscriptionExpired(false);
         setTrialEndsAt(null);
         setSubscription(null);
         setLoading(false);
@@ -95,17 +105,23 @@ export function useSubscription(): UseSubscriptionReturn {
 
       const hasAccess = data.canAccess ?? false;
       const hasSub = data.hasActiveSubscription ?? false;
+      const trialEnd = data.trialEnded ?? false;
+      const subExpired = data.subscriptionExpired ?? false;
       const trial = data.trialEndsAt ?? null;
       const sub = data.subscription ?? null;
 
       setHasActiveSubscription(hasSub);
       setCanAccess(hasAccess);
+      setTrialEnded(trialEnd);
+      setSubscriptionExpired(subExpired);
       setTrialEndsAt(trial);
       setSubscription(sub);
 
       setCached({
         canAccess: hasAccess,
         hasActiveSubscription: hasSub,
+        trialEnded: trialEnd,
+        subscriptionExpired: subExpired,
         trialEndsAt: trial,
         subscription: sub,
       });
@@ -116,6 +132,8 @@ export function useSubscription(): UseSubscriptionReturn {
       if (prev) {
         setCanAccess(prev.canAccess);
         setHasActiveSubscription(prev.hasActiveSubscription);
+        setTrialEnded(prev.trialEnded ?? false);
+        setSubscriptionExpired(prev.subscriptionExpired ?? false);
         setTrialEndsAt(prev.trialEndsAt);
         setSubscription(prev.subscription);
       }
@@ -129,6 +147,8 @@ export function useSubscription(): UseSubscriptionReturn {
     if (cachedNow && (cachedNow.fetchedAt ?? 0) > 0 && Date.now() - cachedNow.fetchedAt < CACHE_TTL_MS) {
       setCanAccess(cachedNow.canAccess);
       setHasActiveSubscription(cachedNow.hasActiveSubscription ?? false);
+      setTrialEnded(cachedNow.trialEnded ?? false);
+      setSubscriptionExpired(cachedNow.subscriptionExpired ?? false);
       setTrialEndsAt(cachedNow.trialEndsAt ?? null);
       setSubscription(cachedNow.subscription ?? null);
       setLoading(false);
@@ -141,6 +161,8 @@ export function useSubscription(): UseSubscriptionReturn {
   return {
     hasActiveSubscription,
     canAccess,
+    trialEnded,
+    subscriptionExpired,
     trialEndsAt,
     subscription,
     loading,

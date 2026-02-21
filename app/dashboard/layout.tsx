@@ -104,8 +104,15 @@ function DashboardLayoutContent({
   const [verificationAttempted, setVerificationAttempted] = useState(false);
   const [paymentJustCompleted, setPaymentJustCompleted] = useState(false);
   const [overrideSubscriptionCheck, setOverrideSubscriptionCheck] = useState(false);
-  const { canAccess, hasActiveSubscription, loading: subscriptionLoading, refetch } =
-    useSubscription();
+  const {
+    canAccess,
+    hasActiveSubscription,
+    trialEnded,
+    subscriptionExpired,
+    subscription,
+    loading: subscriptionLoading,
+    refetch,
+  } = useSubscription();
 
   // Prevent hydration errors
   useEffect(() => {
@@ -297,14 +304,33 @@ function DashboardLayoutContent({
             onEscapeKeyDown={(e) => e.preventDefault()}
           >
             <DialogHeader>
-              <DialogTitle>Trial ended — Subscribe to continue</DialogTitle>
+              <DialogTitle>
+                {subscriptionExpired
+                  ? "Subscription ended — Renew to continue"
+                  : "Trial ended — Subscribe to continue"}
+              </DialogTitle>
               <DialogDescription>
-                Your 7-day free trial has ended. Choose a monthly or annual plan to keep using CallTechAI.
+                {subscriptionExpired ? (
+                  <>
+                    Your{" "}
+                    {subscription?.billing_cycle === "yearly"
+                      ? "annual"
+                      : "monthly"}{" "}
+                    subscription has ended. Renew to keep using CallTechAI.
+                  </>
+                ) : (
+                  <>
+                    Your 7-day free trial has ended. Choose a monthly or annual
+                    plan to keep using CallTechAI.
+                  </>
+                )}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="flex-col sm:flex-row gap-2">
               <Button asChild className="w-full sm:w-auto bg-lime-500 hover:bg-lime-600 text-black font-semibold">
-                <Link href="/dashboard/pricing">View pricing (monthly or annual)</Link>
+                <Link href="/dashboard/pricing">
+                  {subscriptionExpired ? "Renew subscription" : "View pricing (monthly or annual)"}
+                </Link>
               </Button>
               <Button variant="outline" asChild className="w-full sm:w-auto">
                 <Link href="/">Leave dashboard</Link>

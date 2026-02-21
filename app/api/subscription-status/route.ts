@@ -89,11 +89,19 @@ export async function GET() {
       new Date(subscription.current_period_end) > now;
 
     const trialStillActive = trialEndsAt && new Date(trialEndsAt) > now;
+    const trialEnded = trialEndsAt && new Date(trialEndsAt) <= now && !subscription;
+    const subscriptionExpired =
+      !!subscription &&
+      subscription.current_period_end &&
+      new Date(subscription.current_period_end) <= now &&
+      !hasActiveSubscription;
     const canAccess = hasActiveSubscription || trialStillActive;
 
     return NextResponse.json({
       hasActiveSubscription,
       canAccess,
+      trialEnded: trialEnded ?? false,
+      subscriptionExpired: subscriptionExpired ?? false,
       trialEndsAt: trialEndsAt ?? null,
       subscription: subscription
         ? {

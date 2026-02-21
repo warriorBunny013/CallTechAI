@@ -1,17 +1,18 @@
-// ============================================
-// FILE: app/api/create-checkout-session/route.ts (UPDATED)
-// ============================================
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
 import { STRIPE_PLANS } from "@/lib/stripe";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseService } from "@/lib/supabase/service";
+import { getCurrentUserAndOrg } from "@/lib/org";
 import { getCurrentUser } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
+    const [userAndOrg, user] = await Promise.all([
+      getCurrentUserAndOrg(),
+      getCurrentUser(),
+    ]);
 
-    if (!user) {
+    if (!userAndOrg || !user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -24,15 +25,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const userEmail = user.email || "";
+    const userEmail = user.email ?? "";
 
+    const supabase = getSupabaseService();
     let customerId: string;
 
     const { data: existingSubscription } = await supabase
       .from("subscriptions")
       .select("stripe_customer_id")
-      .eq("user_id", user.id)
-      .single();
+      .eq("user_id", userAndOrg.userId)
+      .maybeSingle();
 
     if (existingSubscription?.stripe_customer_id) {
       customerId = existingSubscription.stripe_customer_id;
@@ -40,7 +42,8 @@ export async function POST(req: NextRequest) {
       const customer = await stripe.customers.create({
         email: userEmail,
         metadata: {
-          userId: user.id,
+          userId: userAndOrg.userId,
+          organisationId: userAndOrg.organisationId,
         },
       });
       customerId = customer.id;
@@ -49,7 +52,8 @@ export async function POST(req: NextRequest) {
         .from("subscriptions")
         .upsert(
           {
-            user_id: user.id,
+            user_id: userAndOrg.userId,
+            organisation_id: userAndOrg.organisationId,
             stripe_customer_id: customerId,
             status: "inactive",
             plan_type: "basic",
@@ -62,6 +66,10 @@ export async function POST(req: NextRequest) {
 
       if (upsertError) {
         console.error("Error creating subscription record:", upsertError);
+        return NextResponse.json(
+          { error: "Failed to create subscription record" },
+          { status: 500 },
+        );
       }
     }
 
@@ -79,7 +87,8 @@ export async function POST(req: NextRequest) {
       success_url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/dashboard/pricing`,
       metadata: {
-        userId: user.id,
+        userId: userAndOrg.userId,
+        organisationId: userAndOrg.organisationId,
         plan: "basic",
         billingCycle,
       },
