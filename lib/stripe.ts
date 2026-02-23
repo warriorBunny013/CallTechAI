@@ -18,9 +18,9 @@ export const PLAN_FEATURES = {
 
 // Pricing configuration - use env vars for your Stripe account's price IDs
 const PRICE_MONTHLY =
-  process.env.STRIPE_PRICE_BASIC_MONTHLY ?? "price_1SCMSuKOgBMfPIX7aANUP6Lz";
+  process.env.STRIPE_PRICE_BASIC_MONTHLY ?? "price_1T31aQJKPoxaIirT7FW7LVBo";
 const PRICE_YEARLY =
-  process.env.STRIPE_PRICE_BASIC_YEARLY ?? "price_1SAv7hKOgBMfPIX7RNegQViK";
+  process.env.STRIPE_PRICE_BASIC_YEARLY ?? "price_1T31cMJKPoxaIirTsqIk3hhN";
 
 export const STRIPE_PLANS = {
   basic: {
