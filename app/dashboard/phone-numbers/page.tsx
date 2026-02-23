@@ -13,6 +13,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Badge } from "@/components/ui/badge"
+import { toast } from "@/components/ui/use-toast"
+import { Toaster } from "@/components/ui/toaster"
+import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -20,18 +25,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { toast } from "@/components/ui/use-toast"
-import { Toaster } from "@/components/ui/toaster"
-import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle } from "lucide-react"
 
 interface PhoneNumber {
   id: string
-  user_id: string
+  user_id?: string
+  organisation_id?: string
   vapi_phone_number_id: string
   phone_number: string
   country_code: string
-  number_type: string
+  number_type: "free" | "imported"
   assistant_id?: string
   vapi_assistant_id?: string
   is_active: boolean
@@ -50,21 +52,15 @@ export default function PhoneNumbersPage() {
   const [assistants, setAssistants] = useState<Assistant[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [isConfiguring, setIsConfiguring] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
-  const [numberType, setNumberType] = useState<'free' | 'imported'>('free')
 
-  // Form state for free number
-  const [freeNumberData, setFreeNumberData] = useState({
-    countryCode: 'US'
-  })
-
-  // Form state for imported number
-  const [importNumberData, setImportNumberData] = useState({
-    twilioAccountSid: '',
-    twilioAuthToken: '',
-    twilioPhoneNumberSid: ''
+  const [twilioFormData, setTwilioFormData] = useState({
+    phoneNumber: "",
+    twilioAccountSid: "",
+    twilioAuthToken: "",
+    smsEnabled: true,
+    label: "",
   })
 
   useEffect(() => {
@@ -75,14 +71,14 @@ export default function PhoneNumbersPage() {
   const fetchPhoneNumbers = async () => {
     try {
       setIsLoading(true)
-      const response = await fetch('/api/phone-numbers')
+      const response = await fetch("/api/phone-numbers")
       if (!response.ok) {
-        throw new Error('Failed to fetch phone numbers')
+        throw new Error("Failed to fetch phone numbers")
       }
       const data = await response.json()
       setPhoneNumbers(data.phoneNumbers || [])
     } catch (error) {
-      console.error('Error fetching phone numbers:', error)
+      console.error("Error fetching phone numbers:", error)
       toast({
         title: "Error",
         description: "Failed to load phone numbers. Please try again.",
@@ -95,49 +91,69 @@ export default function PhoneNumbersPage() {
 
   const fetchAssistants = async () => {
     try {
-      const response = await fetch('/api/assistants')
+      const response = await fetch("/api/assistants")
       if (response.ok) {
         const data = await response.json()
         setAssistants(data.assistants || [])
       }
     } catch (error) {
-      console.error('Error fetching assistants:', error)
+      console.error("Error fetching assistants:", error)
     }
   }
 
-  const handleCreateFreeNumber = async () => {
+  const handleImportTwilio = async () => {
+    if (!twilioFormData.phoneNumber || !twilioFormData.twilioAccountSid) {
+      toast({
+        title: "Error",
+        description: "Phone number and Twilio Account SID are required.",
+        variant: "destructive",
+      })
+      return
+    }
+
     try {
       setIsCreating(true)
-      const response = await fetch('/api/phone-numbers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const response = await fetch("/api/phone-numbers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          numberType: 'free',
-          countryCode: freeNumberData.countryCode
+          type: "twilio",
+          phoneNumber: twilioFormData.phoneNumber,
+          twilioAccountSid: twilioFormData.twilioAccountSid,
+          twilioAuthToken: twilioFormData.twilioAuthToken || undefined,
+          smsEnabled: twilioFormData.smsEnabled,
+          label: twilioFormData.label || undefined,
         }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create phone number')
+        throw new Error(data.error || "Failed to import Twilio number")
       }
 
       toast({
         title: "Success",
-        description: "Phone number created successfully!",
+        description:
+          "Twilio number imported. Inbound calls will use your organisation's voice agent.",
       })
-
       setIsDialogOpen(false)
-      setFreeNumberData({ countryCode: 'US' })
+      setTwilioFormData({
+        phoneNumber: "",
+        twilioAccountSid: "",
+        twilioAuthToken: "",
+        smsEnabled: true,
+        label: "",
+      })
       fetchPhoneNumbers()
-    } catch (error: any) {
-      console.error('Error creating phone number:', error)
+    } catch (error: unknown) {
+      console.error("Error importing Twilio number:", error)
       toast({
         title: "Error",
-        description: error.message || "Failed to create phone number. Please try again.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Failed to import Twilio number. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -145,102 +161,54 @@ export default function PhoneNumbersPage() {
     }
   }
 
-  const handleImportNumber = async () => {
-    try {
-      setIsCreating(true)
-      const response = await fetch('/api/phone-numbers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          numberType: 'imported',
-          twilioAccountSid: importNumberData.twilioAccountSid,
-          twilioAuthToken: importNumberData.twilioAuthToken,
-          twilioPhoneNumberSid: importNumberData.twilioPhoneNumberSid
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to import phone number')
-      }
-
-      toast({
-        title: "Success",
-        description: "Phone number imported successfully!",
-      })
-
-      setIsImportDialogOpen(false)
-      setImportNumberData({
-        twilioAccountSid: '',
-        twilioAuthToken: '',
-        twilioPhoneNumberSid: ''
-      })
-      fetchPhoneNumbers()
-    } catch (error: any) {
-      console.error('Error importing phone number:', error)
-      toast({
-        title: "Error",
-        description: error.message || "Failed to import phone number. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsCreating(false)
-    }
-  }
-
-  const handleConfigureAssistant = async (phoneNumberId: string, vapiAssistantId: string, assistantId?: string) => {
+  const handleConfigureAssistant = async (
+    phoneNumberId: string,
+    vapiAssistantId: string,
+    assistantId?: string
+  ) => {
     try {
       setIsConfiguring(phoneNumberId)
-      
-      // Use launch endpoint for better integration
+
       if (assistantId) {
-        const launchResponse = await fetch('/api/assistants/launch', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+        const launchResponse = await fetch("/api/assistants/launch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             phoneNumberId,
-            assistantId
+            assistantId,
           }),
         })
 
         if (!launchResponse.ok) {
-          throw new Error('Failed to launch assistant')
+          throw new Error("Failed to launch assistant")
         }
 
         toast({
-          title: "🎉 Assistant Launched!",
-          description: "Your phone number is now active and ready to receive calls!",
+          title: "Assistant Launched!",
+          description:
+            "Your phone number is now active and ready to receive calls!",
         })
       } else {
-        // Fallback to update endpoint
         const response = await fetch(`/api/phone-numbers/${phoneNumberId}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            vapiAssistantId
-          }),
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vapiAssistantId }),
         })
 
         if (!response.ok) {
-          throw new Error('Failed to configure assistant')
+          throw new Error("Failed to configure assistant")
         }
 
         toast({
           title: "Success",
-          description: "Assistant configured successfully! Inbound calls will now use this assistant.",
+          description:
+            "Assistant configured. Inbound calls will now use this assistant.",
         })
       }
 
       fetchPhoneNumbers()
     } catch (error) {
-      console.error('Error configuring assistant:', error)
+      console.error("Error configuring assistant:", error)
       toast({
         title: "Error",
         description: "Failed to configure assistant. Please try again.",
@@ -252,17 +220,17 @@ export default function PhoneNumbersPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this phone number?')) {
+    if (!confirm("Are you sure you want to delete this phone number?")) {
       return
     }
 
     try {
       const response = await fetch(`/api/phone-numbers/${id}`, {
-        method: 'DELETE',
+        method: "DELETE",
       })
 
       if (!response.ok) {
-        throw new Error('Failed to delete phone number')
+        throw new Error("Failed to delete phone number")
       }
 
       toast({
@@ -272,7 +240,7 @@ export default function PhoneNumbersPage() {
 
       fetchPhoneNumbers()
     } catch (error) {
-      console.error('Error deleting phone number:', error)
+      console.error("Error deleting phone number:", error)
       toast({
         title: "Error",
         description: "Failed to delete phone number. Please try again.",
@@ -288,28 +256,17 @@ export default function PhoneNumbersPage() {
         <div>
           <h1 className="text-3xl font-bold">Phone Numbers</h1>
           <p className="text-muted-foreground mt-2">
-            Manage your phone numbers for inbound and outbound calls
+            Import your Twilio phone number. Customers call this number; inbound
+            calls use your organisation&apos;s voice agent and intents.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            onClick={() => {
-              setNumberType('free')
-              setIsDialogOpen(true)
-            }}
-            className="bg-rose-500 hover:bg-rose-600"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Create Free Number
-          </Button>
-          <Button
-            onClick={() => setIsImportDialogOpen(true)}
-            variant="outline"
-          >
-            <Phone className="h-4 w-4 mr-2" />
-            Import from Twilio
-          </Button>
-        </div>
+        <Button
+          onClick={() => setIsDialogOpen(true)}
+          className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          Import from Twilio
+        </Button>
       </div>
 
       {isLoading ? (
@@ -322,17 +279,16 @@ export default function PhoneNumbersPage() {
             <Phone className="h-12 w-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-semibold mb-2">No phone numbers yet</h3>
             <p className="text-muted-foreground text-center mb-4">
-              Get started by creating a free US phone number or importing one from Twilio
+              Import your existing Twilio number. Customers will call this number;
+              inbound calls use your organisation&apos;s voice agent and
+              intents.
             </p>
             <Button
-              onClick={() => {
-                setNumberType('free')
-                setIsDialogOpen(true)
-              }}
-              className="bg-rose-500 hover:bg-rose-600"
+              onClick={() => setIsDialogOpen(true)}
+              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
             >
               <Plus className="h-4 w-4 mr-2" />
-              Create Your First Number
+              Import Your First Number
             </Button>
           </CardContent>
         </Card>
@@ -359,33 +315,49 @@ export default function PhoneNumbersPage() {
                   )}
                 </div>
                 <CardDescription>
-                  {phone.number_type === 'free' ? 'Free US Number' : 'Imported from Twilio'}
+                  {phone.number_type === "free"
+                    ? "Vapi free US number"
+                    : "Imported from Twilio"}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
                   <Label className="text-sm font-medium">Country Code</Label>
-                  <p className="text-sm text-muted-foreground">{phone.country_code}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {phone.country_code}
+                  </p>
                 </div>
 
                 {phone.vapi_assistant_id ? (
                   <div>
                     <Label className="text-sm font-medium">Assistant</Label>
                     <p className="text-sm text-muted-foreground">
-                      {assistants.find(a => a.vapi_assistant_id === phone.vapi_assistant_id)?.name || 'Configured'}
+                      {assistants.find(
+                        (a) => a.vapi_assistant_id === phone.vapi_assistant_id
+                      )?.name || "Configured"}
                     </p>
                   </div>
                 ) : (
                   <div>
-                    <Label className="text-sm font-medium mb-2 block">Launch Assistant</Label>
+                    <Label className="text-sm font-medium mb-2 block">
+                      Launch Assistant
+                    </Label>
                     <Select
                       onValueChange={(value) => {
-                        const assistant = assistants.find(a => a.vapi_assistant_id === value)
+                        const assistant = assistants.find(
+                          (a) => a.vapi_assistant_id === value
+                        )
                         if (assistant) {
-                          handleConfigureAssistant(phone.id, value, assistant.id)
+                          handleConfigureAssistant(
+                            phone.id,
+                            value,
+                            assistant.id
+                          )
                         }
                       }}
-                      disabled={isConfiguring === phone.id || assistants.length === 0}
+                      disabled={
+                        isConfiguring === phone.id || assistants.length === 0
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select assistant to launch" />
@@ -397,7 +369,10 @@ export default function PhoneNumbersPage() {
                           </SelectItem>
                         ) : (
                           assistants.map((assistant) => (
-                            <SelectItem key={assistant.id} value={assistant.vapi_assistant_id}>
+                            <SelectItem
+                              key={assistant.id}
+                              value={assistant.vapi_assistant_id}
+                            >
                               {assistant.name}
                             </SelectItem>
                           ))
@@ -434,32 +409,105 @@ export default function PhoneNumbersPage() {
         </div>
       )}
 
-      {/* Create Free Number Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+      {/* Import from Twilio Dialog */}
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          setIsDialogOpen(open)
+          if (!open) {
+            setTwilioFormData({
+              phoneNumber: "",
+              twilioAccountSid: "",
+              twilioAuthToken: "",
+              smsEnabled: true,
+              label: "",
+            })
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Create Free US Phone Number</DialogTitle>
+            <DialogTitle>Import Phone Number from Twilio</DialogTitle>
             <DialogDescription>
-              Create a free phone number for US national use. You can create up to 10 free numbers per account.
+              Import your existing Twilio phone number. Inbound calls will use
+              your organisation&apos;s voice agent and intents.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
-              <Label>Country Code</Label>
-              <Select
-                value={freeNumberData.countryCode}
-                onValueChange={(value) => setFreeNumberData({ countryCode: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="US">United States (US)</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Twilio Phone Number (E.164 format)</Label>
+              <Input
+                placeholder="+14155551234"
+                value={twilioFormData.phoneNumber}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/\s+/g, "")
+                  setTwilioFormData((prev) => ({ ...prev, phoneNumber: v }))
+                }}
+              />
               <p className="text-xs text-muted-foreground mt-1">
-                Free numbers are only available for US national use
+                The phone number you own on Twilio (e.g., +14155551234)
               </p>
+            </div>
+            <div>
+              <Label>Twilio Account SID *</Label>
+              <Input
+                placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                value={twilioFormData.twilioAccountSid}
+                onChange={(e) =>
+                  setTwilioFormData((prev) => ({
+                    ...prev,
+                    twilioAccountSid: e.target.value,
+                  }))
+                }
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Found in Twilio Console → Account → API Keys & Tokens
+              </p>
+            </div>
+            <div>
+              <Label>Twilio Auth Token</Label>
+              <Input
+                type="password"
+                placeholder="Your Twilio auth token (optional)"
+                value={twilioFormData.twilioAuthToken}
+                onChange={(e) =>
+                  setTwilioFormData((prev) => ({
+                    ...prev,
+                    twilioAuthToken: e.target.value,
+                  }))
+                }
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional. If not provided, Vapi may use your Vapi account&apos;s
+                Twilio credentials.
+              </p>
+            </div>
+            <div>
+              <Label>Label (optional)</Label>
+              <Input
+                placeholder="Label for phone number"
+                value={twilioFormData.label}
+                onChange={(e) =>
+                  setTwilioFormData((prev) => ({
+                    ...prev,
+                    label: e.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>Enable SMS</Label>
+                <p className="text-xs text-muted-foreground">
+                  Enable SMS messaging for this phone number
+                </p>
+              </div>
+              <Switch
+                checked={twilioFormData.smsEnabled}
+                onCheckedChange={(checked) =>
+                  setTwilioFormData((prev) => ({ ...prev, smsEnabled: checked }))
+                }
+              />
             </div>
           </div>
           <DialogFooter>
@@ -467,73 +515,9 @@ export default function PhoneNumbersPage() {
               Cancel
             </Button>
             <Button
-              onClick={handleCreateFreeNumber}
+              onClick={handleImportTwilio}
               disabled={isCreating}
-              className="bg-rose-500 hover:bg-rose-600"
-            >
-              {isCreating ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                'Create Number'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Import Number Dialog */}
-      <Dialog open={isImportDialogOpen} onOpenChange={setIsImportDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Import Phone Number from Twilio</DialogTitle>
-            <DialogDescription>
-              Import your existing Twilio phone number for international or custom use.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div>
-              <Label>Twilio Account SID</Label>
-              <Input
-                value={importNumberData.twilioAccountSid}
-                onChange={(e) =>
-                  setImportNumberData({ ...importNumberData, twilioAccountSid: e.target.value })
-                }
-                placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-              />
-            </div>
-            <div>
-              <Label>Twilio Auth Token</Label>
-              <Input
-                type="password"
-                value={importNumberData.twilioAuthToken}
-                onChange={(e) =>
-                  setImportNumberData({ ...importNumberData, twilioAuthToken: e.target.value })
-                }
-                placeholder="Your Twilio auth token"
-              />
-            </div>
-            <div>
-              <Label>Twilio Phone Number SID</Label>
-              <Input
-                value={importNumberData.twilioPhoneNumberSid}
-                onChange={(e) =>
-                  setImportNumberData({ ...importNumberData, twilioPhoneNumberSid: e.target.value })
-                }
-                placeholder="PNxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsImportDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleImportNumber}
-              disabled={isCreating}
-              className="bg-rose-500 hover:bg-rose-600"
+              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold"
             >
               {isCreating ? (
                 <>
@@ -541,7 +525,7 @@ export default function PhoneNumbersPage() {
                   Importing...
                 </>
               ) : (
-                'Import Number'
+                "Import from Twilio"
               )}
             </Button>
           </DialogFooter>
@@ -550,4 +534,3 @@ export default function PhoneNumbersPage() {
     </div>
   )
 }
-
