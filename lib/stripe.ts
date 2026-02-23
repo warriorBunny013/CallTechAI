@@ -16,15 +16,20 @@ export const PLAN_FEATURES = {
   ],
 };
 
-// Pricing configuration (safe for client-side)
+// Pricing configuration - use env vars for your Stripe account's price IDs
+const PRICE_MONTHLY =
+  process.env.STRIPE_PRICE_BASIC_MONTHLY ?? "price_1SCMSuKOgBMfPIX7aANUP6Lz";
+const PRICE_YEARLY =
+  process.env.STRIPE_PRICE_BASIC_YEARLY ?? "price_1SAv7hKOgBMfPIX7RNegQViK";
+
 export const STRIPE_PLANS = {
   basic: {
     monthly: {
-      priceId: "price_1SCMSuKOgBMfPIX7aANUP6Lz", // Replace with your actual Stripe Price ID
+      priceId: PRICE_MONTHLY,
       amount: 9900, // $99.00 in cents
     },
     yearly: {
-      priceId: "price_1SAv7hKOgBMfPIX7RNegQViK", // Replace with your actual Stripe Price ID
+      priceId: PRICE_YEARLY,
       amount: 99900, // $999.00 in cents
     },
   },
