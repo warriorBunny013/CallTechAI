@@ -7,13 +7,49 @@ import { getCurrentUser } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
+    // Validate required env vars early
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.error("STRIPE_SECRET_KEY is not set");
+      return NextResponse.json(
+        { error: "Payment configuration error. Please contact support." },
+        { status: 500 },
+      );
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("SUPABASE_SERVICE_ROLE_KEY is not set");
+      return NextResponse.json(
+        { error: "Server configuration error. Please contact support." },
+        { status: 500 },
+      );
+    }
+
+    const monthlyPriceId = STRIPE_PLANS.basic.monthly?.priceId;
+    const yearlyPriceId = STRIPE_PLANS.basic.yearly?.priceId;
+    if (
+      !monthlyPriceId ||
+      !yearlyPriceId ||
+      !monthlyPriceId.startsWith("price_") ||
+      !yearlyPriceId.startsWith("price_")
+    ) {
+      console.error(
+        "Invalid Stripe price IDs. Set STRIPE_PRICE_BASIC_MONTHLY and STRIPE_PRICE_BASIC_YEARLY in env."
+      );
+      return NextResponse.json(
+        { error: "Pricing not configured. Please contact support." },
+        { status: 500 },
+      );
+    }
+
     const [userAndOrg, user] = await Promise.all([
       getCurrentUserAndOrg(),
       getCurrentUser(),
     ]);
 
     if (!userAndOrg || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Please sign in and ensure you have an organisation set up." },
+        { status: 401 },
+      );
     }
 
     const { billingCycle } = await req.json();
@@ -100,8 +136,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ sessionId: session.id, url: session.url });
   } catch (error) {
     console.error("Error creating checkout session:", error);
+
+    // Return sanitized error for debugging (no secrets)
+    const message =
+      error instanceof Error ? error.message : "Unknown error";
+    const isStripeError =
+      message.includes("No such price") ||
+      message.includes("Invalid API Key") ||
+      message.includes("api_key");
+    const safeMessage = isStripeError
+      ? "Stripe configuration error. Ensure price IDs match your Stripe account."
+      : "Failed to create checkout session";
+
     return NextResponse.json(
-      { error: "Failed to create checkout session" },
+      { error: safeMessage },
       { status: 500 },
     );
   }
