@@ -1,7 +1,10 @@
 /**
  * Fetch calls from VAPI API for a given phone number ID.
  * Used to get recordings from VAPI for numbers added in CallTechAI dashboard.
+ * Results are cached in-memory (5 min TTL) to reduce Vapi API calls.
  */
+
+import { getCached, setCached, VAPI_CALLS_TTL_MS } from "./vapi-cache";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
@@ -36,6 +39,12 @@ export async function fetchVapiCallsForPhoneNumber(
     return [];
   }
 
+  const cacheKey = `vapi:calls:${phoneNumberId}:${limit}`;
+  const cached = getCached<VapiCall[]>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   try {
     const params = new URLSearchParams({
       phoneNumberId,
@@ -55,11 +64,14 @@ export async function fetchVapiCallsForPhoneNumber(
       return [];
     }
 
-    const data = await res.json();
-    if (Array.isArray(data)) return data;
-    if (data?.calls && Array.isArray(data.calls)) return data.calls;
-    if (data?.data && Array.isArray(data.data)) return data.data;
-    return [];
+    const raw = await res.json();
+    let calls: VapiCall[] = [];
+    if (Array.isArray(raw)) calls = raw;
+    else if (raw?.calls && Array.isArray(raw.calls)) calls = raw.calls;
+    else if (raw?.data && Array.isArray(raw.data)) calls = raw.data;
+
+    setCached(cacheKey, calls, VAPI_CALLS_TTL_MS);
+    return calls;
   } catch (err) {
     console.error("[vapi-fetch-calls] Error:", err);
     return [];

@@ -18,16 +18,14 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ModeToggle } from "@/components/mode-toggle";
 import {
   Home,
-  Settings,
+  Bot,
   MessageSquare,
-  Zap,
-  User2,
-  FileAudio,
   Phone,
+  Mic,
+  FileAudio,
   CreditCard,
   Loader2,
 } from "lucide-react";
@@ -40,13 +38,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogOut } from "lucide-react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 
 function DemoLayoutContent({
   children,
@@ -186,13 +177,13 @@ function DemoLayoutContent({
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className="h-6 w-6 text-rose-500"
+                  className="h-6 w-6 text-lime-500"
                 >
                   <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
                   <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                   <line x1="12" x2="12" y1="19" y2="22" />
                 </svg>
-                <span className="text-xl font-bold">CallTechAI</span>
+                <span className="text-xl font-bold bg-gradient-to-r from-lime-500 to-lime-600 bg-clip-text text-transparent">CallTechAI</span>
               </div>
               <SidebarSeparator />
             </SidebarHeader>
@@ -212,14 +203,11 @@ function DemoLayoutContent({
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
-                    isActive={pathname === "/dashboard/customization"}
+                    isActive={pathname === "/dashboard/assistants"}
                   >
-                    <Link href="/dashboard/customization" className="flex items-center gap-2 w-full">
-                      <Settings />
-                      <span>Customization</span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400">
-                        Upcoming
-                      </Badge>
+                    <Link href="/dashboard/assistants">
+                      <Bot />
+                      <span>Assistants</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -237,6 +225,17 @@ function DemoLayoutContent({
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
+                    isActive={pathname === "/dashboard/phone-numbers"}
+                  >
+                    <Link href="/dashboard/phone-numbers">
+                      <Phone />
+                      <span>Phone Numbers</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
                     isActive={pathname === "/dashboard/recordings"}
                   >
                     <Link href="/dashboard/recordings">
@@ -246,53 +245,9 @@ function DemoLayoutContent({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === "/dashboard/analytics"}
-                  >
-                    <Link href="/dashboard/analytics" className="flex items-center gap-2 w-full">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-4 w-4"
-                      >
-                        <path d="M3 3v18h18" />
-                        <path d="M18 17V9" />
-                        <path d="M13 17V5" />
-                        <path d="M8 17v-3" />
-                      </svg>
-                      <span>Analytics</span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400">
-                        Upcoming
-                      </Badge>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === "/dashboard/advanced"}
-                  >
-                    <Link href="/dashboard/advanced" className="flex items-center gap-2 w-full">
-                      <Zap />
-                      <span>Advanced</span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400">
-                        Upcoming
-                      </Badge>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/demo"}>
                     <Link href="/demo">
-                      <Phone />
+                      <Mic />
                       <span>Voice Demo</span>
                     </Link>
                   </SidebarMenuButton>
@@ -343,7 +298,7 @@ function DemoLayoutContent({
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="rounded-full">
                     <Avatar className="h-8 w-8">
-                      <AvatarFallback className="bg-rose-500/20 text-rose-600 text-sm">U</AvatarFallback>
+                      <AvatarFallback className="bg-lime-500/20 text-lime-600 dark:text-lime-400 text-sm">U</AvatarFallback>
                     </Avatar>
                   </Button>
                 </DropdownMenuTrigger>

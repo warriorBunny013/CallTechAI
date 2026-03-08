@@ -28,11 +28,16 @@ export async function GET() {
   const config = await fetchVapiAssistantVoiceConfig(assistantId);
   if (!config) {
     return NextResponse.json({
-      assistant: { id: assistantId, name: "Your assistant" },
+      assistant: { id: assistantId, name: "Your assistant", voiceId: null, voiceProvider: null },
     });
   }
 
   return NextResponse.json({
-    assistant: { id: config.id, name: config.name },
+    assistant: {
+      id: config.id,
+      name: config.name,
+      voiceId: config.voiceId,
+      voiceProvider: config.voiceProvider,
+    },
   });
 }
