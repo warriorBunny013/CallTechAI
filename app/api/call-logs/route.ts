@@ -46,6 +46,7 @@ function transformVapiCallToLog(
 ): {
   id: string;
   phoneNumber: string;
+  configuredPhoneNumber: string;
   isWebCall: boolean;
   date: string;
   time: string;
@@ -55,6 +56,7 @@ function transformVapiCallToLog(
   recordingUrl: string | null;
   analysis: string;
   createdAt: string;
+  hasBooking: boolean;
 } {
   const createdAtRaw =
     vapiCall.endedAt ?? vapiCall.startedAt ?? vapiCall.createdAt ?? "";
@@ -82,6 +84,7 @@ function transformVapiCallToLog(
   return {
     id: vapiCall.id,
     phoneNumber,
+    configuredPhoneNumber: assistantPhoneNumber,
     isWebCall: !phoneNumber,
     date,
     time,
@@ -91,6 +94,7 @@ function transformVapiCallToLog(
     recordingUrl: vapiCall.recordingUrl ?? vapiCall.recording ?? null,
     analysis: extractAnalysisText(vapiCall.analysis ?? vapiCall.summary ?? vapiCall.transcript),
     createdAt: createdAtRaw || new Date().toISOString(),
+    hasBooking: false, // populated after merge
   };
 }
 
@@ -131,7 +135,20 @@ export async function GET(request: NextRequest) {
 
     const phoneRows = (orgPhones ?? []) as { phone_number: string; vapi_phone_number_id?: string }[];
 
-    // 2. Fetch calls from VAPI for each dashboard phone number (source of recordings)
+    // 2. Fetch appointments to tag calls where a booking was made
+    const { data: appointments } = await supabase
+      .from("appointments")
+      .select("call_id")
+      .eq("organisation_id", orgId)
+      .not("call_id", "is", null);
+
+    const bookedCallIds = new Set<string>(
+      (appointments ?? [])
+        .map((a: Record<string, unknown>) => a.call_id as string)
+        .filter(Boolean)
+    );
+
+    // 3. Fetch calls from VAPI for each dashboard phone number (source of recordings)
     const vapiCallsByVapiId = new Map<string, ReturnType<typeof transformVapiCallToLog>>();
     if (vapiApiKey && vapiApiKey !== "your_vapi_api_key_here") {
       for (const row of phoneRows) {
@@ -145,7 +162,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3. Fetch calls from Supabase (our DB - may have metadata from webhooks)
+    // 4. Fetch calls from Supabase (our DB - may have metadata from webhooks)
     const { data: dbCalls, error } = await supabase
       .from("calls")
       .select(
@@ -163,7 +180,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 4. Filter DB calls to dashboard numbers only
+    // 5. Filter DB calls to dashboard numbers only
     const filteredDbCalls =
       orgPhoneSet.size === 0
         ? []
@@ -173,12 +190,17 @@ export async function GET(request: NextRequest) {
             return key ? orgPhoneSet.has(key) : false;
           });
 
-    // 5. Merge: prefer VAPI for recordingUrl when available; use DB for calls not in VAPI
+    // 6. Merge: prefer VAPI for recordingUrl when available; use DB for calls not in VAPI
     const seenVapiIds = new Set<string>();
-    const merged: { id: string; phoneNumber: string; isWebCall: boolean; date: string; time: string; duration: string; durationSeconds: number; status: string; recordingUrl: string | null; analysis: string; createdAt: string }[] = [];
+    const merged: {
+      id: string; phoneNumber: string; configuredPhoneNumber: string; isWebCall: boolean;
+      date: string; time: string; duration: string; durationSeconds: number;
+      status: string; recordingUrl: string | null; analysis: string; createdAt: string;
+      hasBooking: boolean;
+    }[] = [];
 
     for (const vapiLog of vapiCallsByVapiId.values()) {
-      merged.push(vapiLog);
+      merged.push({ ...vapiLog, hasBooking: bookedCallIds.has(vapiLog.id) });
       seenVapiIds.add(vapiLog.id);
     }
 
@@ -198,24 +220,27 @@ export async function GET(request: NextRequest) {
         : "";
       const durationSeconds = Number(call.duration_seconds) || 0;
       const status = call.call_status === "completed" || call.call_status === "success" ? "pass" : "fail";
+      const callId = (call.id as string) ?? vapiId ?? `db-${call.id}`;
       merged.push({
-        id: (call.id as string) ?? call.vapi_call_id ?? `db-${call.id}`,
+        id: callId,
         phoneNumber: phoneNumber ?? "",
+        configuredPhoneNumber: (call.assistant_phone_number as string) ?? "",
         isWebCall: !phoneNumber,
         date,
         time,
         duration: formatDuration(durationSeconds),
         durationSeconds,
         status,
-        recordingUrl: call.recording_url ?? null,
+        recordingUrl: (call.recording_url as string | null) ?? null,
         analysis: extractAnalysisText(
           call.analysis ?? call.summary ?? call.transcript ?? null
         ),
         createdAt: createdAtRaw || new Date().toISOString(),
+        hasBooking: bookedCallIds.has(callId) || (vapiId ? bookedCallIds.has(vapiId) : false),
       });
     }
 
-    // 6. Sort by createdAt descending
+    // 7. Sort by createdAt descending
     merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return NextResponse.json(merged.slice(0, 500));

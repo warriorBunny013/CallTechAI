@@ -7,7 +7,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentUserAndOrg } from '@/lib/org'
-import { setVapiPhoneNumberAssistant } from '@/lib/vapi-phone-number'
+import { setVapiPhoneNumberAssistant, setVapiPhoneNumberServerUrl } from '@/lib/vapi-phone-number'
+import { fetchVapiAssistantVoiceConfig } from '@/lib/vapi-fetch-assistant'
+import { getVapiAssistantById } from '@/lib/vapi-assistants'
 
 const VAPI_PHONE_BASE = 'https://api.vapi.ai'
 
@@ -37,7 +39,21 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    return NextResponse.json({ phoneNumbers })
+    // Enrich with assistant names from Vapi for custom assistants (e.g. Daniel)
+    const enriched = await Promise.all(
+      (phoneNumbers || []).map(async (p: Record<string, unknown>) => {
+        const vid = p.vapi_assistant_id as string | undefined
+        if (!vid) return p
+        const predefined = getVapiAssistantById(vid)
+        if (predefined) {
+          return { ...p, assistant_name: predefined.name }
+        }
+        const config = await fetchVapiAssistantVoiceConfig(vid)
+        return { ...p, assistant_name: config?.name ?? 'Assistant' }
+      })
+    )
+
+    return NextResponse.json({ phoneNumbers: enriched })
   } catch (error) {
     console.error('API error:', error)
     return NextResponse.json(
@@ -144,6 +160,7 @@ export async function POST(request: NextRequest) {
           e164Number = normalized
           twilioSid = twilioAccountSid
           twilioToken = twilioAuthToken || null
+          await setVapiPhoneNumberServerUrl(existingVapiId, vapiApiKey)
         } else {
           console.error('VAPI Twilio import error:', createRes.status, msgStr, raw)
           return NextResponse.json(
@@ -225,8 +242,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Set server URL (webhook) on VAPI phone number so call completion webhooks are sent
+    await setVapiPhoneNumberServerUrl(vapiId, vapiApiKey)
+
     // Sync assistant to VAPI: set the org's selected voice agent on this phone number
-    // so it shows correctly in VAPI dashboard (Inbound Settings → Assistant)
     const { data: org } = await supabase
       .from('organisations')
       .select('selected_voice_agent_id')

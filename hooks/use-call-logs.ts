@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 export interface CallLog {
   id: string
   phoneNumber: string
+  configuredPhoneNumber: string
   isWebCall: boolean
   date: string
   time: string
@@ -12,6 +13,7 @@ export interface CallLog {
   recordingUrl: string | null
   analysis: string
   createdAt: string
+  hasBooking?: boolean
 }
 
 export function useCallLogs() {

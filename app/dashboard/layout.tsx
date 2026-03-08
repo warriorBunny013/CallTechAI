@@ -32,6 +32,8 @@ import {
   Loader2,
   Bot,
   Clock,
+  BarChart2,
+  CalendarDays,
 } from "lucide-react";
 import { useSubscription } from "@/hooks/use-subscription";
 import {
@@ -433,36 +435,28 @@ function DashboardLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {/* <SidebarMenuItem>
+                <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/analytics"}
                   >
-                    <Link href="/dashboard/analytics" className="flex items-center gap-2 w-full">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-4 w-4"
-                      >
-                        <path d="M3 3v18h18" />
-                        <path d="M18 17V9" />
-                        <path d="M13 17V5" />
-                        <path d="M8 17v-3" />
-                      </svg>
+                    <Link href="/dashboard/analytics">
+                      <BarChart2 />
                       <span>Analytics</span>
-                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-600 dark:bg-green-950 dark:text-green-400">
-                        Upcoming
-                      </Badge>
                     </Link>
                   </SidebarMenuButton>
-                </SidebarMenuItem> */}
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/bookings"}
+                  >
+                    <Link href="/dashboard/bookings">
+                      <CalendarDays />
+                      <span>Bookings</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
                 {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild

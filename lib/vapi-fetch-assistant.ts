@@ -1,10 +1,11 @@
 /**
  * Fetch an assistant from VAPI by ID to get its real voice (and name, firstMessage).
  * Used so transient assistants sound like Taylor, Jennifer, etc. as configured in VAPI.ai.
- * Server-only: uses VAPI_API_KEY.
+ * Server-only: uses VAPI_API_KEY. Results are cached in-memory (10 min TTL).
  */
 
 import type { VapiAssistantVoiceConfig } from "@/lib/vapi-assistants";
+import { getCached, setCached, VAPI_ASSISTANT_TTL_MS } from "@/lib/vapi-cache";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
@@ -38,6 +39,10 @@ export async function fetchVapiAssistantVoiceConfig(
     return undefined;
   }
 
+  const cacheKey = `vapi:assistant:${assistantId}`;
+  const cached = getCached<VapiAssistantVoiceConfig>(cacheKey);
+  if (cached) return cached;
+
   try {
     const res = await fetch(`${VAPI_BASE}/assistant/${encodeURIComponent(assistantId)}`, {
       method: "GET",
@@ -61,7 +66,7 @@ export async function fetchVapiAssistantVoiceConfig(
     }
 
     const model = data.model;
-    return {
+    const result: VapiAssistantVoiceConfig = {
       id: data.id ?? assistantId,
       name: data.name ?? "Assistant",
       systemPrompt:
@@ -76,6 +81,8 @@ export async function fetchVapiAssistantVoiceConfig(
         temperature: model?.temperature ?? 0.7,
       },
     };
+    setCached(cacheKey, result, VAPI_ASSISTANT_TTL_MS);
+    return result;
   } catch (err) {
     console.error("[vapi-fetch-assistant] Error fetching assistant:", err);
     return undefined;

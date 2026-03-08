@@ -1,9 +1,8 @@
 "use client"
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Mic, MicOff, Phone, PhoneOff, Volume2, VolumeX } from 'lucide-react'
+import { Mic, PhoneOff, VolumeX } from 'lucide-react'
 import { getVapi } from '@/lib/vapi'
 
 /** Transient assistant config (CallTechAI intents + voice) - overrides assistantId when provided */
@@ -17,11 +16,12 @@ export interface AssistantConfig {
 interface VapiWidgetProps {
   apiKey: string
   assistantId?: string
-  /** When set, uses CallTechAI dashboard intents + selected voice instead of VAPI.ai assistant */
   assistantConfig?: AssistantConfig | null
   config?: Record<string, unknown>
   className?: string
   onStartCall?: () => Promise<string | void>
+  onTranscriptUpdate?: (transcript: Array<{ role: string; text: string }>) => void
+  onConnectionChange?: (connected: boolean) => void
   inline?: boolean
 }
 
@@ -32,6 +32,8 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
   config = {},
   className = "",
   onStartCall,
+  onTranscriptUpdate,
+  onConnectionChange,
   inline = false
 }) => {
   const [vapi, setVapi] = useState<any>(null)
@@ -40,6 +42,11 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
   const [isMuted, setIsMuted] = useState(false)
   const [transcript, setTranscript] = useState<Array<{role: string, text: string}>>([])
   const [error, setError] = useState<string>("")
+  const transcriptEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [transcript])
 
   useEffect(() => {
     const initializeVapi = async () => {
@@ -50,14 +57,17 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
         // Event listeners
         vapiInstance.on('call-start', () => {
           console.log('Call started')
+          setTranscript([])
           setIsConnected(true)
           setError("")
+          onConnectionChange?.(true)
         })
 
         vapiInstance.on('call-end', () => {
           console.log('Call ended')
           setIsConnected(false)
           setIsSpeaking(false)
+          onConnectionChange?.(false)
         })
 
         vapiInstance.on('speech-start', () => {
@@ -71,11 +81,16 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
         })
 
         vapiInstance.on('message', (message: any) => {
-          if (message.type === 'transcript') {
-            setTranscript(prev => [...prev, {
-              role: message.role,
-              text: message.transcript
-            }])
+          if (message.type === 'transcript' && message.transcript?.trim()) {
+            // Only add final transcripts — Vapi sends partial updates that cause duplicates
+            if (message.transcriptType === 'partial') return
+            setTranscript(prev => {
+              const last = prev[prev.length - 1]
+              if (last?.role === message.role && last?.text === message.transcript) return prev
+              const next = [...prev, { role: message.role, text: message.transcript }]
+              onTranscriptUpdate?.(next)
+              return next
+            })
           }
         })
 
@@ -98,7 +113,7 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
     if (apiKey) {
       initializeVapi()
     }
-  }, [apiKey, assistantId, assistantConfig])
+  }, [apiKey])
 
   const startCall = async () => {
     try {
@@ -179,52 +194,53 @@ const VapiWidget: React.FC<VapiWidgetProps> = ({
       {!isConnected ? (
         <Button
           onClick={startCall}
-          className="bg-rose-500 hover:bg-rose-600 text-white border-none rounded-full px-6 py-4 text-base font-bold shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1"
+          className="bg-lime-500 hover:bg-lime-600 text-black border-none rounded-full px-6 py-4 text-base font-bold shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1"
           disabled={!vapi}
         >
           <Mic className="mr-2 h-5 w-5" />
           Start Voice Demo
         </Button>
       ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-5 w-80 shadow-2xl border border-gray-200 dark:border-gray-700">
+        <div className="bg-background rounded-2xl p-5 w-80 shadow-lg border">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <div className={`w-3 h-3 rounded-full ${
-                isSpeaking ? 'bg-red-500 animate-pulse' : 'bg-rose-500'
-              }`}></div>
-              <span className="font-bold text-gray-900 dark:text-gray-100">
-                {isSpeaking ? 'Assistant Speaking...' : 'Listening...'}
+              <div className={`w-2.5 h-2.5 rounded-full ${
+                isSpeaking ? 'bg-lime-400 animate-pulse' : 'bg-lime-500'
+              }`} />
+              <span className="text-sm font-medium">
+                {isSpeaking ? 'Speaking...' : 'Listening'}
               </span>
             </div>
-            <Button
-              onClick={endCall}
-              variant="destructive"
-              size="sm"
-            >
+            <Button onClick={endCall} variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive">
               <PhoneOff className="h-4 w-4" />
             </Button>
           </div>
           
-          <div className="max-h-48 overflow-y-auto mb-3 p-2 bg-gray-50 dark:bg-gray-900 rounded-lg">
+          <div className="max-h-48 overflow-y-auto mb-3 space-y-2 p-2 bg-muted/30 rounded-xl min-h-[80px]">
             {transcript.length === 0 ? (
-              <p className="text-gray-500 dark:text-gray-400 text-sm">
-                Conversation will appear here...
+              <p className="text-muted-foreground text-sm py-4 text-center">
+                Speak to see the conversation here
               </p>
             ) : (
-              transcript.map((msg, i) => (
-                <div
-                  key={i}
-                  className={`mb-2 text-right ${msg.role === 'user' ? 'text-right' : 'text-left'}`}
-                >
-                  <span className={`inline-block p-2 rounded-lg text-sm max-w-[80%] ${
-                    msg.role === 'user' 
-                      ? 'bg-rose-500 text-white' 
-                      : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                  }`}>
-                    {msg.text}
-                  </span>
-                </div>
-              ))
+              <>
+                {transcript.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${
+                        msg.role === 'user'
+                          ? 'bg-lime-500 text-black rounded-br-md'
+                          : 'bg-muted text-foreground rounded-bl-md'
+                      }`}
+                    >
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+                <div ref={transcriptEndRef} />
+              </>
             )}
           </div>
 
