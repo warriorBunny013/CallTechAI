@@ -64,7 +64,10 @@ export async function PUT(
     // Update in database
     const updateData: any = {}
     if (assistantId !== undefined) updateData.assistant_id = assistantId
-    if (vapiAssistantId !== undefined) updateData.vapi_assistant_id = vapiAssistantId
+    if (vapiAssistantId !== undefined) {
+      updateData.vapi_assistant_id = vapiAssistantId
+      updateData.is_active = true
+    }
 
     const { data: updatedPhone, error } = await supabase
       .from('phone_numbers')
@@ -123,8 +126,23 @@ export async function DELETE(
       )
     }
 
-    // Delete from VAPI (optional - you might want to keep the number)
-    // For now, we'll just delete from our database
+    const vapiPhoneNumberId = (existingPhone as { vapi_phone_number_id?: string }).vapi_phone_number_id
+
+    // Delete from VAPI first so it's removed from the Vapi dashboard
+    const vapiApiKey = process.env.VAPI_API_KEY
+    if (vapiPhoneNumberId && vapiApiKey && vapiApiKey !== 'your_vapi_api_key_here') {
+      try {
+        const delRes = await fetch(
+          `https://api.vapi.ai/phone-number/${encodeURIComponent(vapiPhoneNumberId)}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${vapiApiKey}` } }
+        )
+        if (!delRes.ok) {
+          console.warn('[phone-numbers] Vapi delete failed:', delRes.status, await delRes.text())
+        }
+      } catch (vapiErr) {
+        console.warn('[phone-numbers] Vapi delete error:', vapiErr)
+      }
+    }
 
     const { error } = await supabase
       .from('phone_numbers')

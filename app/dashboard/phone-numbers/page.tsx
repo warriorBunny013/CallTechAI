@@ -13,18 +13,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { getVapiAssistantById } from "@/lib/vapi-assistants"
 
 interface PhoneNumber {
   id: string
@@ -36,6 +40,7 @@ interface PhoneNumber {
   number_type: "free" | "imported"
   assistant_id?: string
   vapi_assistant_id?: string
+  assistant_name?: string
   is_active: boolean
   created_at: string
   updated_at: string
@@ -50,10 +55,13 @@ interface Assistant {
 export default function PhoneNumbersPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
   const [assistants, setAssistants] = useState<Assistant[]>([])
+  const [selectedVoiceAgentId, setSelectedVoiceAgentId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isConfiguring, setIsConfiguring] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<PhoneNumber | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const [twilioFormData, setTwilioFormData] = useState({
     phoneNumber: "",
@@ -66,6 +74,10 @@ export default function PhoneNumbersPage() {
   useEffect(() => {
     fetchPhoneNumbers()
     fetchAssistants()
+    fetch("/api/organisation")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setSelectedVoiceAgentId(d?.organisation?.selected_voice_agent_id ?? null))
+      .catch(() => {})
   }, [])
 
   const fetchPhoneNumbers = async () => {
@@ -219,25 +231,21 @@ export default function PhoneNumbersPage() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this phone number?")) {
-      return
-    }
+  const handleDeleteClick = (phone: PhoneNumber) => setDeleteTarget(phone)
 
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return
+    setIsDeleting(true)
     try {
-      const response = await fetch(`/api/phone-numbers/${id}`, {
+      const response = await fetch(`/api/phone-numbers/${deleteTarget.id}`, {
         method: "DELETE",
       })
-
-      if (!response.ok) {
-        throw new Error("Failed to delete phone number")
-      }
-
+      if (!response.ok) throw new Error("Failed to delete phone number")
       toast({
-        title: "Success",
-        description: "Phone number deleted successfully.",
+        title: "Deleted",
+        description: "Phone number removed from your dashboard and from the provider.",
       })
-
+      setDeleteTarget(null)
       fetchPhoneNumbers()
     } catch (error) {
       console.error("Error deleting phone number:", error)
@@ -246,6 +254,8 @@ export default function PhoneNumbersPage() {
         description: "Failed to delete phone number. Please try again.",
         variant: "destructive",
       })
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -316,7 +326,7 @@ export default function PhoneNumbersPage() {
                 </div>
                 <CardDescription>
                   {phone.number_type === "free"
-                    ? "Vapi free US number"
+                    ? "Free US number"
                     : "Imported from Twilio"}
                 </CardDescription>
               </CardHeader>
@@ -328,75 +338,60 @@ export default function PhoneNumbersPage() {
                   </p>
                 </div>
 
-                {phone.vapi_assistant_id ? (
-                  <div>
-                    <Label className="text-sm font-medium">Assistant</Label>
-                    <p className="text-sm text-muted-foreground">
-                      {assistants.find(
-                        (a) => a.vapi_assistant_id === phone.vapi_assistant_id
-                      )?.name || "Configured"}
-                    </p>
-                  </div>
-                ) : (
-                  <div>
-                    <Label className="text-sm font-medium mb-2 block">
-                      Launch Assistant
-                    </Label>
-                    <Select
-                      onValueChange={(value) => {
-                        const assistant = assistants.find(
-                          (a) => a.vapi_assistant_id === value
-                        )
-                        if (assistant) {
-                          handleConfigureAssistant(
-                            phone.id,
-                            value,
-                            assistant.id
-                          )
-                        }
-                      }}
-                      disabled={
-                        isConfiguring === phone.id || assistants.length === 0
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select assistant to launch" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {assistants.length === 0 ? (
-                          <SelectItem value="none" disabled>
-                            No assistants available. Create one first.
-                          </SelectItem>
-                        ) : (
-                          assistants.map((assistant) => (
-                            <SelectItem
-                              key={assistant.id}
-                              value={assistant.vapi_assistant_id}
-                            >
-                              {assistant.name}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {isConfiguring === phone.id ? (
-                        <span className="flex items-center gap-1">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Launching...
+                <div>
+                  <Label className="text-sm font-medium">Assistant Name</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    {phone.vapi_assistant_id ? (
+                      <>
+                       
+                        <span className="text-sm text-muted-foreground font-medium">
+                          {phone.assistant_name ||
+                            assistants.find(
+                              (a) => a.vapi_assistant_id === phone.vapi_assistant_id
+                            )?.name ||
+                            getVapiAssistantById(phone.vapi_assistant_id)?.name ||
+                            "Assistant"}
                         </span>
-                      ) : (
-                        "Select an assistant to activate this phone number"
-                      )}
-                    </p>
+                        <Badge variant="default" className="bg-lime-500/20 text-lime-600 dark:text-lime-400 border-lime-500/30">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Activated
+                        </Badge>
+                      </>
+                    ) : (
+                      <>
+                        <Badge variant="secondary">
+                          <XCircle className="h-3 w-3 mr-1" />
+                          Not activated
+                        </Badge>
+                        {selectedVoiceAgentId && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              handleConfigureAssistant(
+                                phone.id,
+                                selectedVoiceAgentId
+                              )
+                            }
+                            disabled={isConfiguring === phone.id}
+                          >
+                            {isConfiguring === phone.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              "Activate"
+                            )}
+                          </Button>
+                        )}
+                      </>
+                    )}
                   </div>
-                )}
+                </div>
 
                 <div className="flex gap-2 pt-2">
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => handleDelete(phone.id)}
+                    onClick={() => handleDeleteClick(phone)}
                     className="flex-1"
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
@@ -531,6 +526,40 @@ export default function PhoneNumbersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete phone number?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove {deleteTarget?.phone_number} from your dashboard and from the provider. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleDeleteConfirm()
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
