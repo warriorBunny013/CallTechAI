@@ -354,12 +354,21 @@ export default function AssistantsPage() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredVoices.map((voice) => (
-                  <button
+                  <div
                     key={voice.id}
-                    type="button"
-                    onClick={() => setSelectedVoiceId(voice.id)}
-                    disabled={creating}
-                    className={`flex items-center gap-3 rounded-lg border p-4 text-left transition-colors ${
+                    role="button"
+                    tabIndex={creating ? -1 : 0}
+                    aria-pressed={selectedVoiceId === voice.id}
+                    onClick={() => !creating && setSelectedVoiceId(voice.id)}
+                    onKeyDown={(e) => {
+                      if (!creating && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault()
+                        setSelectedVoiceId(voice.id)
+                      }
+                    }}
+                    className={`flex items-center gap-3 rounded-lg border p-4 text-left transition-colors cursor-pointer select-none ${
+                      creating ? "opacity-50 cursor-not-allowed" : ""
+                    } ${
                       selectedVoiceId === voice.id
                         ? "border-lime-500 bg-lime-500/10 ring-2 ring-lime-500"
                         : "border-border hover:bg-muted/50"
@@ -400,7 +409,7 @@ export default function AssistantsPage() {
                         <Play className="h-4 w-4 fill-current" />
                       )}
                     </Button>
-                  </button>
+                  </div>
                 ))}
               </div>
               </>

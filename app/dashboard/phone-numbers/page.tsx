@@ -339,19 +339,19 @@ export default function PhoneNumbersPage() {
                 </div>
 
                 <div>
-                  <Label className="text-sm font-medium">Assistant Name</Label>
+                  <Label className="text-sm font-medium">Assistant</Label>
                   <div className="flex items-center gap-2 mt-1">
                     {phone.vapi_assistant_id ? (
                       <>
                        
-                        <span className="text-sm text-muted-foreground font-medium">
+                        {/* <span className="text-sm text-muted-foreground font-medium">
                           {phone.assistant_name ||
                             assistants.find(
                               (a) => a.vapi_assistant_id === phone.vapi_assistant_id
                             )?.name ||
                             getVapiAssistantById(phone.vapi_assistant_id)?.name ||
                             "Assistant"}
-                        </span>
+                        </span> */}
                         <Badge variant="default" className="bg-lime-500/20 text-lime-600 dark:text-lime-400 border-lime-500/30">
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Activated
