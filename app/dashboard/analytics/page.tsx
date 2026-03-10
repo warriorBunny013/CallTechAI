@@ -225,14 +225,14 @@ export default function AnalyticsPage() {
           loading={loading}
           accent="text-green-500"
         />
-        <StatCard
+        {/* <StatCard
           title="Appointments Booked"
           value={loading ? "—" : data.appointmentsBooked}
           sub={loading || data.totalCalls === 0 ? "Via AI assistant" : `${Math.round((data.appointmentsBooked / data.totalCalls) * 100)}% booking rate`}
           icon={CalendarCheck}
           loading={loading}
           accent="text-lime-600"
-        />
+        /> */}
       </div>
 
       {/* Tabs */}
@@ -241,7 +241,7 @@ export default function AnalyticsPage() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="activity">Call Activity</TabsTrigger>
           <TabsTrigger value="numbers">By Phone Number</TabsTrigger>
-          <TabsTrigger value="intents">Intents</TabsTrigger>
+          {/* <TabsTrigger value="intents">Intents</TabsTrigger> */}
         </TabsList>
 
         {/* Overview Tab */}
@@ -522,7 +522,7 @@ export default function AnalyticsPage() {
         </TabsContent>
 
         {/* Intents Tab */}
-        <TabsContent value="intents" className="space-y-4">
+        {/* <TabsContent value="intents" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Popular Intents</CardTitle>
@@ -566,7 +566,7 @@ export default function AnalyticsPage() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> */}
       </Tabs>
     </div>
   )

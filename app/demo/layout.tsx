@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogOut } from "lucide-react";
+import { BarChart2 } from "lucide-react";
 
 function DemoLayoutContent({
   children,
@@ -244,6 +245,28 @@ function DemoLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/analytics"}
+                  >
+                    <Link href="/dashboard/analytics">
+                      <BarChart2 />
+                      <span>Analytics</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                {/* <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/dashboard/bookings"}
+                  >
+                    <Link href="/dashboard/bookings">
+                      <CalendarDays />
+                      <span>Bookings</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem> */}
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/demo"}>
                     <Link href="/demo">

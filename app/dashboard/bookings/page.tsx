@@ -106,6 +106,52 @@ export default function BookingsPage() {
     }
   }, [])
 
+  // Handle ?calendar= redirect param from OAuth flow (run once on mount)
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const calendarParam = params.get("calendar")
+    const reason = params.get("reason")
+
+    if (calendarParam === "connected") {
+      toast({
+        title: "Google Calendar connected!",
+        description: "Your calendar is now linked. Set your availability below and save.",
+      })
+      window.history.replaceState({}, "", "/dashboard/bookings")
+      fetchCalendarStatus()
+    } else if (calendarParam === "denied") {
+      toast({
+        title: "Connection cancelled",
+        description: "You cancelled the Google Calendar authorization. Click Connect to try again.",
+        variant: "destructive",
+      })
+      window.history.replaceState({}, "", "/dashboard/bookings")
+    } else if (calendarParam === "error") {
+      const descriptions: Record<string, string> = {
+        redirect_uri_mismatch:
+          "Redirect URI mismatch — make sure http://localhost:3000/api/calendar/callback is added as an Authorized Redirect URI in your Google Cloud Console OAuth credentials.",
+        invalid_client:
+          "Invalid Google credentials — double-check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your .env.local.",
+        invalid_grant:
+          "Authorization code expired or already used — please try connecting again.",
+        no_credentials:
+          "Google credentials are not configured in the server environment.",
+        db_error:
+          "Failed to save tokens to the database. Check your Supabase connection.",
+      }
+      toast({
+        title: "Google Calendar connection failed",
+        description:
+          (reason && descriptions[reason]) ||
+          "Something went wrong during the OAuth flow. Check the server logs for details.",
+        variant: "destructive",
+      })
+      window.history.replaceState({}, "", "/dashboard/bookings")
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     fetchCalendarStatus()
     fetchAppointments()

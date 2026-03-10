@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseService } from "@/lib/supabase/service";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const BOOKINGS_URL = "/dashboard/bookings";
 
 export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
@@ -18,11 +19,11 @@ export async function GET(req: NextRequest) {
 
   if (error) {
     console.error("[calendar/callback] OAuth error:", error);
-    return NextResponse.redirect(new URL("/dashboard?calendar=denied", req.url));
+    return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=denied`, baseUrl));
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL("/dashboard?calendar=error", req.url));
+    return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=error&reason=missing_code`, baseUrl));
   }
 
   let organisationId: string;
@@ -32,14 +33,14 @@ export async function GET(req: NextRequest) {
     ) as { organisation_id: string };
     organisationId = decoded.organisation_id;
   } catch {
-    return NextResponse.redirect(new URL("/dashboard?calendar=error", req.url));
+    return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=error&reason=invalid_state`, baseUrl));
   }
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
     console.error("Google OAuth credentials not set");
-    return NextResponse.redirect(new URL("/dashboard?calendar=error", req.url));
+    return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=error&reason=no_credentials`, baseUrl));
   }
 
   const body = new URLSearchParams({
@@ -57,9 +58,18 @@ export async function GET(req: NextRequest) {
   });
 
   if (!tokenRes.ok) {
-    const err = await tokenRes.text();
-    console.error("[calendar/callback] Token exchange failed:", tokenRes.status, err);
-    return NextResponse.redirect(new URL("/dashboard?calendar=error", req.url));
+    const errText = await tokenRes.text();
+    console.error("[calendar/callback] Token exchange failed:", tokenRes.status, errText);
+
+    let reason = "exchange_failed";
+    try {
+      const errJson = JSON.parse(errText) as { error?: string };
+      if (errJson.error === "redirect_uri_mismatch") reason = "redirect_uri_mismatch";
+      else if (errJson.error === "invalid_client") reason = "invalid_client";
+      else if (errJson.error === "invalid_grant") reason = "invalid_grant";
+    } catch { /* non-JSON error body */ }
+
+    return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=error&reason=${reason}`, baseUrl));
   }
 
   const tokens = (await tokenRes.json()) as {
@@ -87,8 +97,8 @@ export async function GET(req: NextRequest) {
 
   if (upsertError) {
     console.error("[calendar/callback] Upsert error:", upsertError);
-    return NextResponse.redirect(new URL("/dashboard?calendar=error", req.url));
+    return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=error&reason=db_error`, baseUrl));
   }
 
-  return NextResponse.redirect(new URL("/dashboard?calendar=connected", req.url));
+  return NextResponse.redirect(new URL(`${BOOKINGS_URL}?calendar=connected`, baseUrl));
 }

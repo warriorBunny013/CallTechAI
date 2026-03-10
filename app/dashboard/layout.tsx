@@ -446,7 +446,7 @@ function DashboardLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                <SidebarMenuItem>
+                {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/bookings"}
@@ -456,7 +456,7 @@ function DashboardLayoutContent({
                       <span>Bookings</span>
                     </Link>
                   </SidebarMenuButton>
-                </SidebarMenuItem>
+                </SidebarMenuItem> */}
                 {/* <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
