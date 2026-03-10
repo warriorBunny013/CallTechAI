@@ -271,7 +271,7 @@ export default function RecordingsPage() {
         </Select>
 
         {/* Booking filter toggle */}
-        <Button
+        {/* <Button
           variant={bookingFilter ? "default" : "outline"}
           size="sm"
           className={bookingFilter ? "bg-lime-500 hover:bg-lime-600 text-black font-medium" : ""}
@@ -280,7 +280,7 @@ export default function RecordingsPage() {
           <CalendarCheck className="h-4 w-4 mr-1.5" />
           Booked
           {bookingFilter && <span className="ml-1.5 opacity-70">✓</span>}
-        </Button>
+        </Button> */}
 
         <Button variant="outline" size="icon" onClick={refreshCallLogs} disabled={loading} className="shrink-0">
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />

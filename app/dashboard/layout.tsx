@@ -30,6 +30,7 @@ import {
   Phone,
   CreditCard,
   Loader2,
+  Mic,
   Bot,
   Clock,
   BarChart2,
@@ -485,7 +486,7 @@ function DashboardLayoutContent({
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/demo"}>
                     <Link href="/demo">
-                      <Phone />
+                      <Mic />
                       <span>Voice Demo</span>
                     </Link>
                   </SidebarMenuButton>
