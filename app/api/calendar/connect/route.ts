@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   if (!clientId) {
     console.error("GOOGLE_CLIENT_ID not set");
-    return NextResponse.redirect(new URL("/dashboard?calendar=error", req.url));
+    return NextResponse.redirect(new URL("/dashboard/bookings?calendar=error&reason=no_credentials", req.url));
   }
 
   const state = Buffer.from(
