@@ -312,7 +312,7 @@ export default function AssistantsPage() {
           <div className="space-y-2">
             <Label>Voice configuration</Label>
             <p className="text-sm text-muted-foreground">
-              Select a voice from the 11labs provider. Your assistant will greet callers with: &quot;Hi there, this is {assistantName || "[name]"}. How can I help you today?&quot;
+              Select a voice. Your assistant will greet callers with: &quot;Hi there, this is {assistantName || "[name]"}. How can I help you today?&quot;
             </p>
             {voicesLoading ? (
               <div className="flex items-center gap-2 text-muted-foreground py-4">

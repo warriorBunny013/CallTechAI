@@ -63,6 +63,28 @@ import {
 
 function UserMenu() {
   const router = useRouter();
+  const [initials, setInitials] = useState("U");
+
+  useEffect(() => {
+    fetch("/api/profile")
+      .then((r) => r.json())
+      .then((d) => {
+        const name: string = d.profile?.full_name ?? "";
+        const email: string = d.profile?.email ?? "";
+        if (name.trim()) {
+          const parts = name.trim().split(" ");
+          setInitials(
+            parts.length >= 2
+              ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+              : name.trim().slice(0, 2).toUpperCase()
+          );
+        } else if (email) {
+          setInitials(email.slice(0, 2).toUpperCase());
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/");
@@ -73,11 +95,19 @@ function UserMenu() {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="rounded-full">
           <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-lime-500/20 text-lime-600 dark:text-lime-400 text-sm">U</AvatarFallback>
+            <AvatarFallback className="bg-lime-500/20 text-lime-600 dark:text-lime-400 text-sm font-semibold">
+              {initials}
+            </AvatarFallback>
           </Avatar>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuItem asChild className="cursor-pointer">
+          <Link href="/dashboard/profile">
+            <User2 className="mr-2 h-4 w-4" />
+            Profile
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem onClick={handleLogout} className="cursor-pointer">
           <LogOut className="mr-2 h-4 w-4" />
           Log out

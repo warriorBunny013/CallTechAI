@@ -1,326 +1,215 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Switch } from "@/components/ui/switch"
+import { Separator } from "@/components/ui/separator"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { Save, Upload, Bell, Shield } from "lucide-react"
+import { Loader2, Mail, Phone, Building2, User, Pencil, Check, X } from "lucide-react"
+
+interface Profile {
+  full_name: string | null
+  email: string | null
+  phone: string | null
+  organisation_name: string | null
+}
+
+function getInitials(name: string | null, email: string | null): string {
+  if (name && name.trim()) {
+    const parts = name.trim().split(" ")
+    return parts.length >= 2
+      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+      : name.trim().slice(0, 2).toUpperCase()
+  }
+  if (email) return email.slice(0, 2).toUpperCase()
+  return "??"
+}
 
 export default function ProfilePage() {
-  const [name, setName] = useState("John Doe")
-  const [email, setEmail] = useState("john.doe@example.com")
-  const [company, setCompany] = useState("Acme Inc.")
-  const [phone, setPhone] = useState("+1 (555) 123-4567")
-  const [currentPassword, setCurrentPassword] = useState("")
-  const [newPassword, setNewPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [emailNotifications, setEmailNotifications] = useState(true)
-  const [callNotifications, setCallNotifications] = useState(true)
-  const [weeklyReports, setWeeklyReports] = useState(true)
-  const [twoFactorAuth, setTwoFactorAuth] = useState(false)
-  const [isSaving, setIsSaving] = useState(false)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const handleSaveProfile = () => {
-    setIsSaving(true)
+  const [editField, setEditField] = useState<"full_name" | "phone" | "organisation_name" | null>(null)
+  const [editValue, setEditValue] = useState("")
+  const [saving, setSaving] = useState(false)
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsSaving(false)
-      toast({
-        title: "Profile updated",
-        description: "Your profile information has been saved successfully.",
-      })
-    }, 1000)
+  useEffect(() => {
+    fetch("/api/profile")
+      .then((r) => r.json())
+      .then((d) => setProfile(d.profile ?? null))
+      .catch(() => toast({ title: "Failed to load profile", variant: "destructive" }))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const startEdit = (field: "full_name" | "phone" | "organisation_name") => {
+    setEditField(field)
+    setEditValue(profile?.[field] ?? "")
   }
 
-  const handleChangePassword = () => {
-    if (newPassword !== confirmPassword) {
-      toast({
-        title: "Passwords don't match",
-        description: "New password and confirmation password must match.",
-        variant: "destructive",
+  const cancelEdit = () => {
+    setEditField(null)
+    setEditValue("")
+  }
+
+  const saveEdit = async () => {
+    if (!editField) return
+    setSaving(true)
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [editField]: editValue }),
       })
-      return
+      if (!res.ok) throw new Error("Failed to save")
+      setProfile((prev) => prev ? { ...prev, [editField]: editValue } : prev)
+      toast({ title: "Saved", description: "Profile updated successfully." })
+      setEditField(null)
+    } catch {
+      toast({ title: "Error", description: "Could not save changes.", variant: "destructive" })
+    } finally {
+      setSaving(false)
     }
-
-    if (newPassword.length < 8) {
-      toast({
-        title: "Password too short",
-        description: "Password must be at least 8 characters long.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsSaving(true)
-
-    // Simulate API call
-    setTimeout(() => {
-      setIsSaving(false)
-      setCurrentPassword("")
-      setNewPassword("")
-      setConfirmPassword("")
-      toast({
-        title: "Password updated",
-        description: "Your password has been changed successfully.",
-      })
-    }, 1000)
   }
 
-  const handleSaveNotifications = () => {
-    setIsSaving(true)
-
-    // Simulate API call
-    setTimeout(() => {
-      setIsSaving(false)
-      toast({
-        title: "Notification preferences updated",
-        description: "Your notification settings have been saved successfully.",
-      })
-    }, 1000)
+  if (loading) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
   }
 
-  const handleSaveSecurity = () => {
-    setIsSaving(true)
+  const initials = getInitials(profile?.full_name ?? null, profile?.email ?? null)
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsSaving(false)
-      toast({
-        title: "Security settings updated",
-        description: "Your security settings have been saved successfully.",
-      })
-    }, 1000)
-  }
+  const fields: {
+    key: "full_name" | "phone" | "organisation_name"
+    label: string
+    icon: React.ReactNode
+    editable: true
+    placeholder: string
+  }[] = [
+    {
+      key: "full_name",
+      label: "Full name",
+      icon: <User className="h-4 w-4" />,
+      editable: true,
+      placeholder: "Your full name",
+    },
+    {
+      key: "phone",
+      label: "Phone number",
+      icon: <Phone className="h-4 w-4" />,
+      editable: true,
+      placeholder: "+1 234 567 8900",
+    },
+    {
+      key: "organisation_name",
+      label: "Organisation name",
+      icon: <Building2 className="h-4 w-4" />,
+      editable: true,
+      placeholder: "Your company name",
+    },
+  ]
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Profile Settings</h1>
-        <p className="text-muted-foreground">Manage your account settings and preferences</p>
+    <div className="max-w-2xl mx-auto space-y-8 py-4">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+        <p className="text-sm text-muted-foreground mt-1">View and update your account details.</p>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-6">
-        <Card className="md:w-1/3">
-          <CardHeader>
-            <CardTitle>Your Profile</CardTitle>
-            <CardDescription>Manage your personal information</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center space-y-4">
-            <Avatar className="h-24 w-24">
-              <AvatarImage src="/placeholder.svg?height=96&width=96" alt="Profile" />
-              <AvatarFallback>JD</AvatarFallback>
-            </Avatar>
-            <Button variant="outline" size="sm">
-              <Upload className="mr-2 h-4 w-4" />
-              Change Photo
-            </Button>
-            <div className="w-full space-y-1 text-center">
-              <h3 className="font-medium text-lg">{name}</h3>
-              <p className="text-sm text-muted-foreground">{email}</p>
-              <p className="text-sm text-muted-foreground">{company}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="flex-1">
-          <Tabs defaultValue="account" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="account">Account</TabsTrigger>
-              <TabsTrigger value="password">Password</TabsTrigger>
-              <TabsTrigger value="notifications">Notifications</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="account" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Account Information</CardTitle>
-                  <CardDescription>Update your personal and contact information</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Full Name</Label>
-                      <Input
-                        id="name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="Your full name"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email Address</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="your.email@example.com"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="company">Company</Label>
-                      <Input
-                        id="company"
-                        value={company}
-                        onChange={(e) => setCompany(e.target.value)}
-                        placeholder="Company name"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="phone">Phone Number</Label>
-                      <Input
-                        id="phone"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        placeholder="+1 (555) 123-4567"
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-                <CardFooter>
-                  <Button onClick={handleSaveProfile} disabled={isSaving} className="bg-rose-500 hover:bg-rose-600">
-                    <Save className="mr-2 h-4 w-4" />
-                    {isSaving ? "Saving..." : "Save Changes"}
-                  </Button>
-                </CardFooter>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Security Settings</CardTitle>
-                  <CardDescription>Manage your account security preferences</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="two-factor">Two-Factor Authentication</Label>
-                      <p className="text-sm text-muted-foreground">Add an extra layer of security to your account</p>
-                    </div>
-                    <Switch id="two-factor" checked={twoFactorAuth} onCheckedChange={setTwoFactorAuth} />
-                  </div>
-                </CardContent>
-                <CardFooter>
-                  <Button onClick={handleSaveSecurity} disabled={isSaving} className="bg-rose-500 hover:bg-rose-600">
-                    <Shield className="mr-2 h-4 w-4" />
-                    {isSaving ? "Saving..." : "Save Security Settings"}
-                  </Button>
-                </CardFooter>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="password" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Change Password</CardTitle>
-                  <CardDescription>Update your account password</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="current-password">Current Password</Label>
-                    <Input
-                      id="current-password"
-                      type="password"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="Enter your current password"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="new-password">New Password</Label>
-                    <Input
-                      id="new-password"
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter your new password"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="confirm-password">Confirm New Password</Label>
-                    <Input
-                      id="confirm-password"
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Confirm your new password"
-                    />
-                  </div>
-                </CardContent>
-                <CardFooter>
-                  <Button
-                    onClick={handleChangePassword}
-                    disabled={isSaving || !currentPassword || !newPassword || !confirmPassword}
-                    className="bg-rose-500 hover:bg-rose-600"
-                  >
-                    {isSaving ? "Updating..." : "Update Password"}
-                  </Button>
-                </CardFooter>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="notifications" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Notification Preferences</CardTitle>
-                  <CardDescription>Manage how you receive notifications</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="email-notifications">Email Notifications</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Receive notifications about account activity via email
-                      </p>
-                    </div>
-                    <Switch
-                      id="email-notifications"
-                      checked={emailNotifications}
-                      onCheckedChange={setEmailNotifications}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="call-notifications">Call Notifications</Label>
-                      <p className="text-sm text-muted-foreground">Get notified when new calls are received</p>
-                    </div>
-                    <Switch
-                      id="call-notifications"
-                      checked={callNotifications}
-                      onCheckedChange={setCallNotifications}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label htmlFor="weekly-reports">Weekly Reports</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Receive weekly summary reports of your assistant's activity
-                      </p>
-                    </div>
-                    <Switch id="weekly-reports" checked={weeklyReports} onCheckedChange={setWeeklyReports} />
-                  </div>
-                </CardContent>
-                <CardFooter>
-                  <Button
-                    onClick={handleSaveNotifications}
-                    disabled={isSaving}
-                    className="bg-rose-500 hover:bg-rose-600"
-                  >
-                    <Bell className="mr-2 h-4 w-4" />
-                    {isSaving ? "Saving..." : "Save Notification Settings"}
-                  </Button>
-                </CardFooter>
-              </Card>
-            </TabsContent>
-          </Tabs>
+      {/* Avatar + name */}
+      <div className="flex items-center gap-5">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-lime-500/15 border-2 border-lime-500/30 text-2xl font-bold text-lime-600 dark:text-lime-400 shrink-0 select-none">
+          {initials}
+        </div>
+        <div>
+          <p className="text-xl font-semibold">{profile?.full_name ?? "—"}</p>
+          <p className="text-sm text-muted-foreground">{profile?.email ?? "—"}</p>
         </div>
       </div>
+
+      <Separator />
+
+      {/* Email — read-only */}
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          <Mail className="h-3.5 w-3.5" />
+          Email address
+        </div>
+        <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-3">
+          <span className="text-sm font-medium">{profile?.email ?? "—"}</span>
+          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Read-only</span>
+        </div>
+        <p className="text-xs text-muted-foreground px-1">Email cannot be changed after registration.</p>
+      </div>
+
+      {/* Editable fields */}
+      {fields.map((field) => {
+        const isEditing = editField === field.key
+        const value = profile?.[field.key]
+
+        return (
+          <div key={field.key} className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {field.icon}
+              {field.label}
+            </div>
+
+            {isEditing ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  autoFocus
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  placeholder={field.placeholder}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveEdit()
+                    if (e.key === "Escape") cancelEdit()
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={saveEdit}
+                  disabled={saving}
+                  className="h-9 w-9 text-lime-600 hover:text-lime-700 hover:bg-lime-500/10"
+                >
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={cancelEdit}
+                  disabled={saving}
+                  className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3 group hover:border-lime-500/50 transition-colors">
+                <span className="text-sm font-medium">
+                  {value ? value : <span className="text-muted-foreground italic">Not set</span>}
+                </span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => startEdit(field.key)}
+                  className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )
+      })}
+
       <Toaster />
     </div>
   )
