@@ -396,7 +396,7 @@ export default function LandingPage() {
             >
               <video
                 ref={videoRef}
-                src="calltechai-demo-version1.mov"
+                src="/calltechai-demo-version1.mov"
                 className="w-full h-full object-cover"
                 muted
                 playsInline
