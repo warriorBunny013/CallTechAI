@@ -10,7 +10,6 @@
 # production
 /build
 
-public/calltechai-demo.mov
 # debug
 npm-debug.log*
 yarn-debug.log*
