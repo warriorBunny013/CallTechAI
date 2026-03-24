@@ -40,7 +40,7 @@ export interface VapiAssistantVoiceConfig {
   firstMessage: string
   voiceProvider: string
   voiceId: string
-  model: { provider: string; model: string; temperature: number }
+  model: { provider: string; model: string; temperature: number; toolIds?: string[] }
 }
 
 const VAPI_ASSISTANT_VOICE_CONFIG: Record<string, VapiAssistantVoiceConfig> = {

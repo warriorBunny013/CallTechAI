@@ -19,6 +19,8 @@ interface VapiAssistantResponse {
     model?: string;
     temperature?: number;
     messages?: { role?: string; content?: string }[];
+    toolIds?: string[];
+    tools?: unknown[];
   };
   voice?: {
     provider?: string;
@@ -77,8 +79,9 @@ export async function fetchVapiAssistantVoiceConfig(
       voiceId: voice.voiceId,
       model: {
         provider: model?.provider ?? "openai",
-        model: model?.model ?? "gpt-4",
+        model: model?.model ?? "gpt-4o",
         temperature: model?.temperature ?? 0.7,
+        toolIds: model?.toolIds ?? [],
       },
     };
     setCached(cacheKey, result, VAPI_ASSISTANT_TTL_MS);

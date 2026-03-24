@@ -77,14 +77,33 @@ export async function POST(req: NextRequest) {
     const systemPrompt = buildAssistantSystemPrompt(assistantName, orgName, intentRows);
     const firstMessage = buildAssistantFirstMessage(assistantName);
 
+    // Check if Google Calendar is already connected — if so, include stored tool IDs + inline tools
+    const { data: calConn } = await supabase
+      .from("organisation_calendar_connections")
+      .select("calendar_id, vapi_tool_ids")
+      .eq("organisation_id", userAndOrg.organisationId)
+      .maybeSingle();
+
+    const calendarConnected = !!(calConn as { calendar_id?: string | null } | null)?.calendar_id;
+    const storedToolIds: string[] =
+      ((calConn as Record<string, unknown> | null)?.vapi_tool_ids as string[]) ?? [];
+
+    // Use toolIds only (no inline tools) — tool entities are created at calendar-connect time
+    void calendarConnected; // suppress unused warning
+
     const assistantPayload = {
       name: assistantName,
       firstMessage,
+      // Give enough silence headroom while tool calls (calendar, booking) are in-flight.
+      // VAPI default is 30 s — too short when Google Calendar API is being called.
+      silenceTimeoutSeconds: 60,
+      maxDurationSeconds: 3600,
       model: {
         provider: "openai",
-        model: "gpt-4",
+        model: "gpt-4o",
         temperature: 0.7,
         messages: [{ role: "system", content: systemPrompt }],
+        ...(storedToolIds.length > 0 ? { toolIds: storedToolIds } : {}),
       },
       voice: {
         provider: voiceProvider,

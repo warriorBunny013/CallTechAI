@@ -1,4 +1,5 @@
 import Link from "next/link"
+import Image from "next/image"
 
 export const metadata = {
   title: "Privacy Policy — CallTechAI",
@@ -11,24 +12,17 @@ export default function PrivacyPage() {
       {/* Header */}
       <header className="sticky top-0 z-50 w-full border-b border-black/10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 shadow-sm">
         <div className="container flex h-16 items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-6 w-6 text-lime-500"
-            >
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" x2="12" y1="19" y2="22" />
-            </svg>
-            <span className="text-xl font-bold bg-gradient-to-r from-lime-500 to-lime-600 bg-clip-text text-transparent">
-              CallTechAI
-            </span>
+          <Link href="/" className="flex items-center gap-1">
+            <Image
+              src="/Calltechai-logo-svg.svg"
+              alt="CallTechAI Logo"
+              width={54}
+              height={54}
+              className="shrink-0"
+            />
+             <span className="text-xl font-bold text-white">
+                  CallTech<span className="text-[#84CC16]">AI</span>
+              </span>
           </Link>
           <Link href="/" className="text-sm font-medium text-gray-600 hover:text-lime-600 transition-colors">
             ← Back to Home

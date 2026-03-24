@@ -1,16 +1,22 @@
 /**
  * Organisation resolution for multi-tenant access.
  * All dashboard and API logic should filter by organisation_id from this helper.
+ *
+ * NOTE: We use the service-role client for organisation_members lookups because
+ * this app uses Clerk for authentication (not Supabase native auth). Without a
+ * Supabase session, auth.uid() returns null and RLS policies block anon-key reads.
+ * Application-level security is enforced by always scoping queries to the resolved
+ * organisation_id.
  */
 
-import { createClient } from "@/lib/supabase/server";
+import { getSupabaseService } from "@/lib/supabase/service";
 
 /**
  * Get the current user's primary organisation ID (first org they belong to).
  * Use this in API routes to scope all queries by organisation_id.
  */
 export async function getOrganisationIdForUser(userId: string): Promise<string | null> {
-  const supabase = await createClient();
+  const supabase = getSupabaseService();
   const { data, error } = await supabase
     .from("organisation_members")
     .select("organisation_id")
@@ -20,7 +26,7 @@ export async function getOrganisationIdForUser(userId: string): Promise<string |
     .single();
 
   if (error || !data) return null;
-  return data.organisation_id as string;
+  return (data as { organisation_id: string }).organisation_id;
 }
 
 /**
@@ -40,25 +46,6 @@ export async function getCurrentUserAndOrg(): Promise<{
   return { userId: user.id, organisationId };
 }
 
-/**
- * Get organisation_id for a user using service role (for webhooks, no session).
- */
-export async function getOrganisationIdForUserService(
-  userId: string
-): Promise<string | null> {
-  const { getSupabaseService } = await import("@/lib/supabase/service");
-  const supabase = getSupabaseService();
-  const { data, error } = await supabase
-    .from("organisation_members")
-    .select("organisation_id")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .single();
-
-  if (error || !data) return null;
-  return data.organisation_id as string;
-}
 
 /**
  * Ensure the current user has access to the given organisation (is a member).
@@ -67,7 +54,7 @@ export async function userBelongsToOrganisation(
   userId: string,
   organisationId: string
 ): Promise<boolean> {
-  const supabase = await createClient();
+  const supabase = getSupabaseService();
   const { data, error } = await supabase
     .from("organisation_members")
     .select("id")
