@@ -71,14 +71,36 @@ export async function PATCH(req: NextRequest) {
     const systemPrompt = buildAssistantSystemPrompt(newName, orgName, intentRows);
     const firstMessage = buildAssistantFirstMessage(newName);
 
+    // Check if calendar is connected and rebuild custom booking tools
+    const { data: calConn } = await supabase
+      .from("organisation_calendar_connections")
+      .select("calendar_id, vapi_tool_ids")
+      .eq("organisation_id", userAndOrg.organisationId)
+      .maybeSingle();
+
+    // Use stored vapi_tool_ids from Supabase (populated by calendar-connect callback)
+    const storedToolIds: string[] =
+      ((calConn as Record<string, unknown> | null)?.vapi_tool_ids as string[]) ?? [];
+
+    // Merge: preserve existing non-calendar toolIds, plus stored calendar tool IDs
+    const existingToolIds: string[] = currentConfig.model?.toolIds ?? [];
+    const nonCalendarToolIds = existingToolIds.filter((id) => !storedToolIds.includes(id));
+    const mergedToolIds = [...nonCalendarToolIds, ...storedToolIds];
+
+    // Use toolIds only (no inline tools) — avoids duplicate calls
     const patchPayload = {
       name: newName,
       firstMessage,
+      // Extend silence timeout so tool calls (calendar, booking) don't race against the
+      // VAPI default 30 s silence threshold and cause premature call termination.
+      silenceTimeoutSeconds: 60,
+      maxDurationSeconds: 3600,
       model: {
         provider: currentConfig.model.provider,
         model: currentConfig.model.model,
         temperature: currentConfig.model.temperature,
         messages: [{ role: "system", content: systemPrompt }],
+        ...(mergedToolIds.length > 0 ? { toolIds: mergedToolIds } : {}),
       },
       voice: {
         provider: newVoiceProvider,

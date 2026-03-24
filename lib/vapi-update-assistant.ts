@@ -42,6 +42,9 @@ export async function syncIntentsToVapiAssistant(
       intents
     );
 
+    // Preserve existing toolIds so that booking tools are not stripped from the assistant.
+    const existingToolIds = voiceConfig.model.toolIds ?? [];
+
     const res = await fetch(`${VAPI_BASE}/assistant/${encodeURIComponent(assistantId)}`, {
       method: "PATCH",
       headers: {
@@ -54,6 +57,7 @@ export async function syncIntentsToVapiAssistant(
           model: voiceConfig.model.model,
           temperature: voiceConfig.model.temperature,
           messages: [{ role: "system", content: newSystemPrompt }],
+          ...(existingToolIds.length > 0 ? { toolIds: existingToolIds } : {}),
         },
       }),
     });

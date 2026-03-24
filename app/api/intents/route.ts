@@ -81,7 +81,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    await syncOrgIntentsToVapi(userAndOrg.organisationId, supabase)
+    // Fire-and-forget — VAPI sync failure must not fail the intent create
+    void syncOrgIntentsToVapi(userAndOrg.organisationId, supabase).catch((e) =>
+      console.error("[intents/POST] VAPI sync error (non-fatal):", e)
+    );
 
     return NextResponse.json({ intent }, { status: 201 })
   } catch (error) {

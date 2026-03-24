@@ -29,6 +29,7 @@ import {
   FileAudio,
   CreditCard,
   Loader2,
+  CalendarDays,
 } from "lucide-react";
 import { useSubscription } from "@/hooks/use-subscription";
 import {
@@ -170,22 +171,17 @@ function DemoLayoutContent({
         <div className="flex min-h-screen w-full">
           <Sidebar className="w-56">
             <SidebarHeader className="flex flex-col items-center justify-center px-1 py-4">
-              <div className="flex items-center gap-2 mb-4">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="h-6 w-6 text-lime-500"
-                >
-                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                  <line x1="12" x2="12" y1="19" y2="22" />
-                </svg>
-                <span className="text-xl font-bold bg-gradient-to-r from-lime-500 to-lime-600 bg-clip-text text-transparent">CallTechAI</span>
+              <div className="flex items-center gap-1 mb-4">
+                <Image
+                  src="/Calltechai-logo-svg.svg"
+                  alt="CallTechAI Logo"
+                  width={54}
+                  height={54}
+                  className="shrink-0"
+                />
+                 <span className="text-xl font-bold text-white">
+                  CallTech<span className="text-[#84CC16]">AI</span>
+                </span>
               </div>
               <SidebarSeparator />
             </SidebarHeader>
@@ -257,7 +253,7 @@ function DemoLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {/* <SidebarMenuItem>
+                <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
                     isActive={pathname === "/dashboard/bookings"}
@@ -267,7 +263,7 @@ function DemoLayoutContent({
                       <span>Bookings</span>
                     </Link>
                   </SidebarMenuButton>
-                </SidebarMenuItem> */}
+                </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/demo"}>
                     <Link href="/demo">

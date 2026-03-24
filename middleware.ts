@@ -6,6 +6,8 @@ const publicPaths = [
   "/login",
   "/signup",
   "/api/webhooks",
+  "/api/vapi-tools",
+  "/api/calendar/callback",
   "/demo",
 ];
 const isPublic = (pathname: string) =>

@@ -52,25 +52,42 @@ export async function refreshGoogleTokens(
 }
 
 /**
- * Get a valid access token: use existing if not expired, else refresh.
+ * Get a valid access token: use existing if not expired, else refresh and persist.
+ * Pass a `saveToken` callback to persist the refreshed token back to your DB.
  */
 export async function getValidAccessToken(
   connection: CalendarConnection,
   clientId: string,
-  clientSecret: string
+  clientSecret: string,
+  saveToken?: (accessToken: string, expiryIso: string) => Promise<void>
 ): Promise<string | null> {
   const expiry = connection.token_expiry ? new Date(connection.token_expiry).getTime() : 0;
   const now = Date.now();
+
+  // Token still valid (with 60s buffer)
   if (connection.access_token && expiry > now + 60_000) {
     return connection.access_token;
   }
+
   if (!connection.refresh_token) return null;
+
   const refreshed = await refreshGoogleTokens(
     connection.refresh_token,
     clientId,
     clientSecret
   );
-  return refreshed?.access_token ?? null;
+
+  if (!refreshed) return null;
+
+  // Persist the new token so we don't refresh on every call
+  if (saveToken) {
+    const expiryIso = new Date(refreshed.expiry_date).toISOString();
+    await saveToken(refreshed.access_token, expiryIso).catch((e) =>
+      console.warn("[google-calendar] Failed to save refreshed token:", e)
+    );
+  }
+
+  return refreshed.access_token;
 }
 
 /**
@@ -103,12 +120,15 @@ export async function queryFreeBusy(
   const data = (await res.json()) as {
     calendars?: Record<string, { busy?: { start: string; end: string }[] }>;
   };
-  const cal = data.calendars?.[calendarId];
+
+  // Try exact calendarId key, then fall back to "primary"
+  const cal = data.calendars?.[calendarId] ?? data.calendars?.["primary"];
   return { busy: cal?.busy ?? [] };
 }
 
 /**
  * Create a calendar event and return the event id and start/end.
+ * Optionally include attendee emails to send Google Calendar invites.
  */
 export async function createCalendarEvent(
   accessToken: string,
@@ -116,15 +136,25 @@ export async function createCalendarEvent(
   summary: string,
   start: string,
   end: string,
-  description?: string
+  description?: string,
+  attendeeEmails?: string[],
+  timezone?: string
 ): Promise<{ id: string; start: string; end: string }> {
   const url = GOOGLE_CALENDAR_EVENTS(calendarId);
-  const body = {
+  const tz = timezone ?? "UTC";
+
+  const body: Record<string, unknown> = {
     summary,
     description: description ?? "",
-    start: { dateTime: start, timeZone: "UTC" },
-    end: { dateTime: end, timeZone: "UTC" },
+    start: { dateTime: start, timeZone: tz },
+    end: { dateTime: end, timeZone: tz },
   };
+
+  if (attendeeEmails && attendeeEmails.length > 0) {
+    body.attendees = attendeeEmails.map((email) => ({ email }));
+    // Send email notifications to attendees
+    body.sendUpdates = "all";
+  }
 
   const res = await fetch(url, {
     method: "POST",
@@ -140,7 +170,12 @@ export async function createCalendarEvent(
     throw new Error(`Calendar event create failed: ${res.status} ${err}`);
   }
 
-  const data = (await res.json()) as { id: string; start?: { dateTime: string }; end?: { dateTime: string } };
+  const data = (await res.json()) as {
+    id: string;
+    start?: { dateTime: string };
+    end?: { dateTime: string };
+  };
+
   return {
     id: data.id,
     start: data.start?.dateTime ?? start,

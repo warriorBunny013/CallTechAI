@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -84,18 +83,12 @@ export default function PhoneNumbersPage() {
     try {
       setIsLoading(true)
       const response = await fetch("/api/phone-numbers")
-      if (!response.ok) {
-        throw new Error("Failed to fetch phone numbers")
-      }
+      if (!response.ok) throw new Error("Failed to fetch phone numbers")
       const data = await response.json()
       setPhoneNumbers(data.phoneNumbers || [])
     } catch (error) {
       console.error("Error fetching phone numbers:", error)
-      toast({
-        title: "Error",
-        description: "Failed to load phone numbers. Please try again.",
-        variant: "destructive",
-      })
+      toast({ title: "Error", description: "Failed to load phone numbers. Please try again.", variant: "destructive" })
     } finally {
       setIsLoading(false)
     }
@@ -115,11 +108,7 @@ export default function PhoneNumbersPage() {
 
   const handleImportTwilio = async () => {
     if (!twilioFormData.phoneNumber || !twilioFormData.twilioAccountSid) {
-      toast({
-        title: "Error",
-        description: "Phone number and Twilio Account SID are required.",
-        variant: "destructive",
-      })
+      toast({ title: "Error", description: "Phone number and Twilio Account SID are required.", variant: "destructive" })
       return
     }
 
@@ -139,33 +128,17 @@ export default function PhoneNumbersPage() {
       })
 
       const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Failed to import Twilio number")
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to import Twilio number")
-      }
-
-      toast({
-        title: "Success",
-        description:
-          "Twilio number imported. Inbound calls will use your organisation's voice agent.",
-      })
+      toast({ title: "Success", description: "Twilio number imported. Inbound calls will use your organisation's voice agent." })
       setIsDialogOpen(false)
-      setTwilioFormData({
-        phoneNumber: "",
-        twilioAccountSid: "",
-        twilioAuthToken: "",
-        smsEnabled: true,
-        label: "",
-      })
+      setTwilioFormData({ phoneNumber: "", twilioAccountSid: "", twilioAuthToken: "", smsEnabled: true, label: "" })
       fetchPhoneNumbers()
     } catch (error: unknown) {
       console.error("Error importing Twilio number:", error)
       toast({
         title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to import Twilio number. Please try again.",
+        description: error instanceof Error ? error.message : "Failed to import Twilio number. Please try again.",
         variant: "destructive",
       })
     } finally {
@@ -173,11 +146,7 @@ export default function PhoneNumbersPage() {
     }
   }
 
-  const handleConfigureAssistant = async (
-    phoneNumberId: string,
-    vapiAssistantId: string,
-    assistantId?: string
-  ) => {
+  const handleConfigureAssistant = async (phoneNumberId: string, vapiAssistantId: string, assistantId?: string) => {
     try {
       setIsConfiguring(phoneNumberId)
 
@@ -185,47 +154,24 @@ export default function PhoneNumbersPage() {
         const launchResponse = await fetch("/api/assistants/launch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phoneNumberId,
-            assistantId,
-          }),
+          body: JSON.stringify({ phoneNumberId, assistantId }),
         })
-
-        if (!launchResponse.ok) {
-          throw new Error("Failed to launch assistant")
-        }
-
-        toast({
-          title: "Assistant Launched!",
-          description:
-            "Your phone number is now active and ready to receive calls!",
-        })
+        if (!launchResponse.ok) throw new Error("Failed to launch assistant")
+        toast({ title: "Assistant Launched!", description: "Your phone number is now active and ready to receive calls!" })
       } else {
         const response = await fetch(`/api/phone-numbers/${phoneNumberId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ vapiAssistantId }),
         })
-
-        if (!response.ok) {
-          throw new Error("Failed to configure assistant")
-        }
-
-        toast({
-          title: "Success",
-          description:
-            "Assistant configured. Inbound calls will now use this assistant.",
-        })
+        if (!response.ok) throw new Error("Failed to configure assistant")
+        toast({ title: "Success", description: "Assistant configured. Inbound calls will now use this assistant." })
       }
 
       fetchPhoneNumbers()
     } catch (error) {
       console.error("Error configuring assistant:", error)
-      toast({
-        title: "Error",
-        description: "Failed to configure assistant. Please try again.",
-        variant: "destructive",
-      })
+      toast({ title: "Error", description: "Failed to configure assistant. Please try again.", variant: "destructive" })
     } finally {
       setIsConfiguring(null)
     }
@@ -237,200 +183,186 @@ export default function PhoneNumbersPage() {
     if (!deleteTarget) return
     setIsDeleting(true)
     try {
-      const response = await fetch(`/api/phone-numbers/${deleteTarget.id}`, {
-        method: "DELETE",
-      })
+      const response = await fetch(`/api/phone-numbers/${deleteTarget.id}`, { method: "DELETE" })
       if (!response.ok) throw new Error("Failed to delete phone number")
-      toast({
-        title: "Deleted",
-        description: "Phone number removed from your dashboard and from the provider.",
-      })
+      toast({ title: "Deleted", description: "Phone number removed from your dashboard and from the provider." })
       setDeleteTarget(null)
       fetchPhoneNumbers()
     } catch (error) {
       console.error("Error deleting phone number:", error)
-      toast({
-        title: "Error",
-        description: "Failed to delete phone number. Please try again.",
-        variant: "destructive",
-      })
+      toast({ title: "Error", description: "Failed to delete phone number. Please try again.", variant: "destructive" })
     } finally {
       setIsDeleting(false)
     }
   }
 
   return (
-    <div className="space-y-6">
-      <Toaster />
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Phone Numbers</h1>
-          <p className="text-muted-foreground mt-2">
-            Import your Twilio phone number. Customers call this number; inbound
-            calls use your organisation&apos;s voice agent and intents.
-          </p>
-        </div>
-        <Button
-          onClick={() => setIsDialogOpen(true)}
-          className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Import from Twilio
-        </Button>
-      </div>
+    <>
+      <style jsx global>{`
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+        * { font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+      `}</style>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin" />
-        </div>
-      ) : phoneNumbers.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Phone className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No phone numbers yet</h3>
-            <p className="text-muted-foreground text-center mb-4">
-              Import your existing Twilio number. Customers will call this number;
-              inbound calls use your organisation&apos;s voice agent and
-              intents.
-            </p>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50 dark:from-[#0A0A0A] dark:via-black dark:to-[#0A0A0A] p-4 md:p-6 lg:p-8">
+        <div className="max-w-[1600px] mx-auto space-y-6 md:space-y-8">
+
+          {/* Header */}
+          <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-2">
+              <h1 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 dark:from-white dark:via-gray-100 dark:to-white bg-clip-text text-transparent">
+                Phone Numbers
+              </h1>
+              <p className="text-base md:text-lg text-gray-600 dark:text-gray-400 max-w-2xl">
+                Import your Twilio phone number. Customers call this number; inbound calls use your organisation&apos;s voice agent and intents.
+              </p>
+            </div>
             <Button
               onClick={() => setIsDialogOpen(true)}
-              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
+              className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-semibold h-11 px-6 rounded-xl shadow-lg shadow-[#84CC16]/25 hover:shadow-[#84CC16]/40 transition-all self-start"
             >
               <Plus className="h-4 w-4 mr-2" />
-              Import Your First Number
+              Import from Twilio
             </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {phoneNumbers.map((phone) => (
-            <Card key={phone.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <Phone className="h-5 w-5" />
-                    {phone.phone_number}
-                  </CardTitle>
-                  {phone.is_active ? (
-                    <Badge variant="default" className="bg-green-500">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Active
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary">
-                      <XCircle className="h-3 w-3 mr-1" />
-                      Inactive
-                    </Badge>
-                  )}
-                </div>
-                <CardDescription>
-                  {phone.number_type === "free"
-                    ? "Free US number"
-                    : "Imported from Twilio"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label className="text-sm font-medium">Country Code</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {phone.country_code}
-                  </p>
-                </div>
+          </div>
 
-                <div>
-                  <Label className="text-sm font-medium">Assistant</Label>
-                  <div className="flex items-center gap-2 mt-1">
-                    {phone.vapi_assistant_id ? (
-                      <>
-                       
-                        {/* <span className="text-sm text-muted-foreground font-medium">
-                          {phone.assistant_name ||
-                            assistants.find(
-                              (a) => a.vapi_assistant_id === phone.vapi_assistant_id
-                            )?.name ||
-                            getVapiAssistantById(phone.vapi_assistant_id)?.name ||
-                            "Assistant"}
-                        </span> */}
-                        <Badge variant="default" className="bg-lime-500/20 text-lime-600 dark:text-lime-400 border-lime-500/30">
+          {/* Content */}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-xl bg-[#84CC16]/10">
+                  <Loader2 className="h-6 w-6 animate-spin text-[#84CC16]" />
+                </div>
+                <span className="text-lg font-semibold text-gray-600 dark:text-gray-400">Loading phone numbers...</span>
+              </div>
+            </div>
+          ) : phoneNumbers.length === 0 ? (
+            <div className="p-12 rounded-2xl bg-white dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-white/10 flex flex-col items-center justify-center text-center">
+              <div className="inline-flex p-4 rounded-full bg-gray-100 dark:bg-white/5 mb-4">
+                <Phone className="h-8 w-8 text-gray-400 dark:text-gray-600" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No phone numbers yet</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 text-center mb-6 max-w-sm">
+                Import your existing Twilio number. Customers will call this number; inbound calls use your organisation&apos;s voice agent and intents.
+              </p>
+              <Button
+                onClick={() => setIsDialogOpen(true)}
+                className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-semibold rounded-xl shadow-lg shadow-[#84CC16]/25"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Import Your First Number
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {phoneNumbers.map((phone) => (
+                <div
+                  key={phone.id}
+                  className="group p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 hover:border-[#84CC16]/50 dark:hover:border-[#84CC16]/50 hover:shadow-lg hover:shadow-[#84CC16]/5 transition-all duration-300"
+                >
+                  {/* Card Header */}
+                  <div className="flex items-start justify-between mb-5">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-[#84CC16]/10 group-hover:scale-110 transition-transform duration-300">
+                        <Phone className="h-5 w-5 text-[#84CC16]" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white font-mono">{phone.phone_number}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+                          {phone.number_type === "free" ? "Free US number" : "Imported from Twilio"}
+                        </p>
+                      </div>
+                    </div>
+                    {phone.is_active ? (
+                      <Badge className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-0 font-semibold">
+                        <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse mr-1.5" />
+                        Active
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Inactive
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Country Code */}
+                  <div className="mb-4 p-3 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-0.5">Country Code</p>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{phone.country_code}</p>
+                  </div>
+
+                  {/* Assistant */}
+                  <div className="mb-5">
+                    <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-2">Assistant</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {phone.vapi_assistant_id ? (
+                        <Badge className="bg-[#84CC16]/10 text-[#84CC16] border border-[#84CC16]/20 font-semibold">
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Activated
                         </Badge>
-                      </>
-                    ) : (
-                      <>
-                        <Badge variant="secondary">
-                          <XCircle className="h-3 w-3 mr-1" />
-                          Not activated
-                        </Badge>
-                        {selectedVoiceAgentId && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              handleConfigureAssistant(
-                                phone.id,
-                                selectedVoiceAgentId
-                              )
-                            }
-                            disabled={isConfiguring === phone.id}
-                          >
-                            {isConfiguring === phone.id ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              "Activate"
-                            )}
-                          </Button>
-                        )}
-                      </>
-                    )}
+                      ) : (
+                        <>
+                          <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
+                            <XCircle className="h-3 w-3 mr-1" />
+                            Not activated
+                          </Badge>
+                          {selectedVoiceAgentId && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleConfigureAssistant(phone.id, selectedVoiceAgentId)}
+                              disabled={isConfiguring === phone.id}
+                              className="rounded-xl border-[#84CC16]/30 text-[#84CC16] hover:bg-[#84CC16]/10 font-semibold h-7 text-xs"
+                            >
+                              {isConfiguring === phone.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                "Activate"
+                              )}
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="pt-4 border-t border-gray-100 dark:border-white/5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDeleteClick(phone)}
+                      className="w-full rounded-xl border-red-200 bg-red-900/10 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete Number
+                    </Button>
                   </div>
                 </div>
-
-                <div className="flex gap-2 pt-2">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => handleDeleteClick(phone)}
-                    className="flex-1"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Import from Twilio Dialog */}
       <Dialog
         open={isDialogOpen}
         onOpenChange={(open) => {
           setIsDialogOpen(open)
-          if (!open) {
-            setTwilioFormData({
-              phoneNumber: "",
-              twilioAccountSid: "",
-              twilioAuthToken: "",
-              smsEnabled: true,
-              label: "",
-            })
-          }
+          if (!open) setTwilioFormData({ phoneNumber: "", twilioAccountSid: "", twilioAuthToken: "", smsEnabled: true, label: "" })
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg rounded-2xl border-gray-200 dark:border-white/10">
           <DialogHeader>
-            <DialogTitle>Import Phone Number from Twilio</DialogTitle>
-            <DialogDescription>
-              Import your existing Twilio phone number. Inbound calls will use
-              your organisation&apos;s voice agent and intents.
+            <DialogTitle className="text-xl font-bold">Import Phone Number from Twilio</DialogTitle>
+            <DialogDescription className="text-gray-600 dark:text-gray-400">
+              Import your existing Twilio phone number. Inbound calls will use your organisation&apos;s voice agent and intents.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
-              <Label>Twilio Phone Number (E.164 format)</Label>
+              <Label className="font-semibold text-gray-900 dark:text-white">Twilio Phone Number (E.164 format)</Label>
               <Input
                 placeholder="+14155551234"
                 value={twilioFormData.phoneNumber}
@@ -438,87 +370,62 @@ export default function PhoneNumbersPage() {
                   const v = e.target.value.replace(/\s+/g, "")
                   setTwilioFormData((prev) => ({ ...prev, phoneNumber: v }))
                 }}
+                className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                The phone number you own on Twilio (e.g., +14155551234)
-              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">The phone number you own on Twilio (e.g., +14155551234)</p>
             </div>
             <div>
-              <Label>Twilio Account SID *</Label>
+              <Label className="font-semibold text-gray-900 dark:text-white">Twilio Account SID *</Label>
               <Input
                 placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                 value={twilioFormData.twilioAccountSid}
-                onChange={(e) =>
-                  setTwilioFormData((prev) => ({
-                    ...prev,
-                    twilioAccountSid: e.target.value,
-                  }))
-                }
+                onChange={(e) => setTwilioFormData((prev) => ({ ...prev, twilioAccountSid: e.target.value }))}
+                className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Found in Twilio Console → Account → API Keys & Tokens
-              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Found in Twilio Console → Account → API Keys & Tokens</p>
             </div>
             <div>
-              <Label>Twilio Auth Token</Label>
+              <Label className="font-semibold text-gray-900 dark:text-white">Twilio Auth Token</Label>
               <Input
                 type="password"
                 placeholder="Your Twilio auth token (optional)"
                 value={twilioFormData.twilioAuthToken}
-                onChange={(e) =>
-                  setTwilioFormData((prev) => ({
-                    ...prev,
-                    twilioAuthToken: e.target.value,
-                  }))
-                }
+                onChange={(e) => setTwilioFormData((prev) => ({ ...prev, twilioAuthToken: e.target.value }))}
+                className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Optional. If not provided, Vapi may use your Vapi account&apos;s
-                Twilio credentials.
-              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Optional. If not provided, Vapi may use your Vapi account&apos;s Twilio credentials.</p>
             </div>
             <div>
-              <Label>Label (optional)</Label>
+              <Label className="font-semibold text-gray-900 dark:text-white">Label (optional)</Label>
               <Input
                 placeholder="Label for phone number"
                 value={twilioFormData.label}
-                onChange={(e) =>
-                  setTwilioFormData((prev) => ({
-                    ...prev,
-                    label: e.target.value,
-                  }))
-                }
+                onChange={(e) => setTwilioFormData((prev) => ({ ...prev, label: e.target.value }))}
+                className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
               />
             </div>
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label>Enable SMS</Label>
-                <p className="text-xs text-muted-foreground">
-                  Enable SMS messaging for this phone number
-                </p>
+            <div className="flex items-center justify-between p-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
+              <div>
+                <Label className="font-semibold text-gray-900 dark:text-white">Enable SMS</Label>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">Enable SMS messaging for this phone number</p>
               </div>
               <Switch
                 checked={twilioFormData.smsEnabled}
-                onCheckedChange={(checked) =>
-                  setTwilioFormData((prev) => ({ ...prev, smsEnabled: checked }))
-                }
+                onCheckedChange={(checked) => setTwilioFormData((prev) => ({ ...prev, smsEnabled: checked }))}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDialogOpen(false)} className="rounded-xl border-gray-200 dark:border-white/10 font-semibold">
               Cancel
             </Button>
             <Button
               onClick={handleImportTwilio}
               disabled={isCreating}
-              className="bg-lime-500 hover:bg-lime-600 text-black font-semibold"
+              className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-semibold rounded-xl shadow-lg shadow-[#84CC16]/25"
             >
               {isCreating ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Importing...
-                </>
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importing...</>
               ) : (
                 "Import from Twilio"
               )}
@@ -527,32 +434,23 @@ export default function PhoneNumbersPage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-      >
-        <AlertDialogContent>
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent className="rounded-2xl border-gray-200 dark:border-white/10">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete phone number?</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogTitle className="text-xl font-bold">Delete phone number?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-600 dark:text-gray-400">
               This will remove {deleteTarget?.phone_number} from your dashboard and from the provider. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting} className="rounded-xl border-gray-200 dark:border-white/10 font-semibold">Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault()
-                handleDeleteConfirm()
-              }}
+              onClick={(e) => { e.preventDefault(); handleDeleteConfirm() }}
               disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-red-600 hover:bg-red-700 text-white rounded-xl font-semibold"
             >
               {isDeleting ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Deleting...
-                </>
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Deleting...</>
               ) : (
                 "Delete"
               )}
@@ -560,6 +458,8 @@ export default function PhoneNumbersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+
+      <Toaster />
+    </>
   )
 }
