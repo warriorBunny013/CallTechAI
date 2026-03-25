@@ -677,7 +677,7 @@ export default function LandingPage() {
                         <span className="text-5xl font-bold text-white">${yearlyPrice(MONTHLY_PRICES.starter)}</span>
                         <span className="text-lg text-white/50">/mo</span>
                       </div>
-                      <p className="text-sm font-bold text-[#84CC16]">40% Early Bird Offer · billed yearly</p>
+                      {/* <p className="text-sm font-bold text-white/50">billed yearly</p> */}
                     </>
                   ) : (
                     <>
@@ -724,7 +724,7 @@ export default function LandingPage() {
                         <span className="text-5xl font-bold text-white">${yearlyPrice(MONTHLY_PRICES.growth)}</span>
                         <span className="text-lg text-white/50">/mo</span>
                       </div>
-                      <p className="text-sm font-bold text-[#84CC16]">40% Early Bird Offer · billed yearly</p>
+                      {/* <p className="text-sm font-bold text-[#84CC16]">40% Early Bird Offer · billed yearly</p> */}
                     </>
                   ) : (
                     <>
@@ -769,7 +769,7 @@ export default function LandingPage() {
                         <span className="text-5xl font-bold text-white">${yearlyPrice(MONTHLY_PRICES.pro)}</span>
                         <span className="text-lg text-white/50">/mo</span>
                       </div>
-                      <p className="text-sm font-bold text-[#84CC16]">40% Early Bird Offer · billed yearly</p>
+                      {/* <p className="text-sm font-bold text-[#84CC16]">40% Early Bird Offer · billed yearly</p> */}
                     </>
                   ) : (
                     <>
