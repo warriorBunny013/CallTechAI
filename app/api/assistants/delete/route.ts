@@ -1,85 +1,141 @@
 /**
- * Delete the current org's assistant (unlink from org and phone numbers, delete from VAPI).
+ * Delete an org assistant by row id (organisation_assistants.id).
+ * Query: ?id=<uuid>
  */
 
-import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseService } from "@/lib/supabase/service";
 import { getCurrentUserAndOrg } from "@/lib/org";
-import { setVapiPhoneNumberAssistant } from "@/lib/vapi-phone-number";
+import { deleteElevenLabsAgent } from "@/lib/elevenlabs-agent-manager";
 
-const VAPI_BASE = "https://api.vapi.ai";
-
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
   try {
     const userAndOrg = await getCurrentUserAndOrg();
     if (!userAndOrg) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const supabase = await createClient();
+    const assistantRowId = req.nextUrl.searchParams.get("id");
+    const supabase = getSupabaseService();
+    const orgId = userAndOrg.organisationId;
 
-    const { data: org } = await supabase
-      .from("organisations")
-      .select("id, selected_voice_agent_id")
-      .eq("id", userAndOrg.organisationId)
-      .single();
+    let elevenLabsAgentId: string | null = null;
+    let wasDefault = false;
 
-    const assistantId = (org as { selected_voice_agent_id?: string | null } | null)?.selected_voice_agent_id ?? null;
-    if (!assistantId) {
-      return NextResponse.json(
-        { error: "No assistant to delete" },
-        { status: 404 }
-      );
+    if (assistantRowId) {
+      const { data: row, error } = await supabase
+        .from("organisation_assistants")
+        .select("id, elevenlabs_agent_id, is_default")
+        .eq("id", assistantRowId)
+        .eq("organisation_id", orgId)
+        .maybeSingle();
+
+      if (error || !row) {
+        const { data: byElId } = await supabase
+          .from("organisation_assistants")
+          .select("id, elevenlabs_agent_id, is_default")
+          .eq("organisation_id", orgId)
+          .eq("elevenlabs_agent_id", assistantRowId)
+          .maybeSingle();
+
+        if (!byElId) {
+          return NextResponse.json({ error: "Assistant not found" }, { status: 404 });
+        }
+
+        elevenLabsAgentId = (byElId as { elevenlabs_agent_id: string }).elevenlabs_agent_id;
+        wasDefault = Boolean((byElId as { is_default?: boolean }).is_default);
+        await supabase
+          .from("organisation_assistants")
+          .delete()
+          .eq("id", (byElId as { id: string }).id);
+      } else {
+        elevenLabsAgentId = (row as { elevenlabs_agent_id: string }).elevenlabs_agent_id;
+        wasDefault = Boolean((row as { is_default?: boolean }).is_default);
+        await supabase.from("organisation_assistants").delete().eq("id", assistantRowId);
+      }
+    } else {
+      const { data: org } = await supabase
+        .from("organisations")
+        .select("elevenlabs_agent_id")
+        .eq("id", orgId)
+        .single();
+
+      elevenLabsAgentId =
+        (org as { elevenlabs_agent_id?: string | null } | null)?.elevenlabs_agent_id ?? null;
+      wasDefault = true;
+
+      if (!elevenLabsAgentId) {
+        return NextResponse.json({ error: "No assistant to delete" }, { status: 404 });
+      }
+
+      await supabase
+        .from("organisation_assistants")
+        .delete()
+        .eq("organisation_id", orgId)
+        .eq("elevenlabs_agent_id", elevenLabsAgentId);
     }
 
-    const vapiApiKey = process.env.VAPI_API_KEY;
-
-    // Unlink all org phone numbers from this assistant
-    const { data: phones } = await supabase
-      .from("phone_numbers")
-      .select("vapi_phone_number_id")
-      .eq("organisation_id", userAndOrg.organisationId);
-
-    for (const p of phones ?? []) {
-      const vid = (p as { vapi_phone_number_id?: string }).vapi_phone_number_id;
-      if (vid && vapiApiKey) {
-        await setVapiPhoneNumberAssistant(vid, null, vapiApiKey);
+    if (elevenLabsAgentId) {
+      try {
+        await deleteElevenLabsAgent(elevenLabsAgentId);
+      } catch (e) {
+        console.warn("[assistants/delete] ElevenLabs delete failed (may already be gone):", e);
       }
     }
 
-    // Clear org's selected assistant
-    const { error: updateError } = await supabase
-      .from("organisations")
-      .update({
-        selected_voice_agent_id: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", userAndOrg.organisationId);
+    if (wasDefault) {
+      const { data: nextDefault } = await supabase
+        .from("organisation_assistants")
+        .select("id, elevenlabs_agent_id, name, voice_id, languages, system_prompt, first_message, template_id")
+        .eq("organisation_id", orgId)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-    if (updateError) {
-      console.error("[assistants/delete] Org update failed:", updateError);
-      return NextResponse.json(
-        { error: "Failed to unlink assistant from organisation" },
-        { status: 500 }
-      );
-    }
+      if (nextDefault) {
+        const nd = nextDefault as Record<string, unknown>;
+        const nextAgentId = String(nd.elevenlabs_agent_id);
+        const langs = Array.isArray(nd.languages) ? nd.languages : ["en"];
 
-    // Delete assistant from VAPI
-    if (vapiApiKey && vapiApiKey !== "your_vapi_api_key_here") {
-      const delRes = await fetch(`${VAPI_BASE}/assistant/${encodeURIComponent(assistantId)}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${vapiApiKey}`,
-        },
-      });
-      if (!delRes.ok) {
-        console.warn("[assistants/delete] VAPI DELETE failed (assistant may already be gone):", delRes.status);
+        await supabase
+          .from("organisation_assistants")
+          .update({ is_default: true })
+          .eq("id", nd.id);
+
+        await supabase
+          .from("organisations")
+          .update({
+            elevenlabs_agent_id: nextAgentId,
+            selected_voice_agent_id: nd.voice_id,
+            updated_at: new Date().toISOString(),
+          } as Record<string, unknown>)
+          .eq("id", orgId);
+
+        await supabase.from("organisation_settings").upsert({
+          organisation_id: orgId,
+          agent_name: nd.name,
+          agent_voice_id: nd.voice_id,
+          agent_language: langs[0] ?? "en",
+          agent_languages: langs,
+          agent_template_id: nd.template_id,
+          agent_system_prompt: nd.system_prompt,
+          agent_first_message: nd.first_message,
+          updated_at: new Date().toISOString(),
+        } as Record<string, unknown>);
+      } else {
+        await supabase
+          .from("organisations")
+          .update({
+            elevenlabs_agent_id: null,
+            updated_at: new Date().toISOString(),
+          } as Record<string, unknown>)
+          .eq("id", orgId);
+
+        await supabase.from("organisation_settings").delete().eq("organisation_id", orgId);
       }
     }
 
-    return NextResponse.json({
-      message: "Assistant deleted successfully",
-    });
+    return NextResponse.json({ message: "Assistant deleted successfully" });
   } catch (err) {
     console.error("[assistants/delete] Error:", err);
     return NextResponse.json(

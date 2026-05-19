@@ -316,7 +316,7 @@ export default function BookingsPage() {
                   <AlertDialogHeader>
                     <AlertDialogTitle>Disconnect Google Calendar?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will unlink your Google Calendar, remove the booking tools from your VAPI assistant, and delete your stored calendar credentials. Your existing booked appointments will not be affected.
+                      This will unlink your Google Calendar and delete your stored calendar credentials. Your AI assistant&apos;s booking tools will remain on the agent but will respond that the calendar isn&apos;t set up until you reconnect. Your existing booked appointments will not be affected.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentUserAndOrg } from '@/lib/org'
 import { syncOrgIntentsToVapi } from '@/lib/vapi-update-assistant'
+import { syncOrgIntentsToElevenLabsAgents } from '@/lib/elevenlabs-intent-sync'
 
 export async function GET(request: NextRequest) {
   try {
@@ -81,9 +82,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Fire-and-forget — VAPI sync failure must not fail the intent create
     void syncOrgIntentsToVapi(userAndOrg.organisationId, supabase).catch((e) =>
       console.error("[intents/POST] VAPI sync error (non-fatal):", e)
+    );
+
+    void syncOrgIntentsToElevenLabsAgents(userAndOrg.organisationId).catch((e) =>
+      console.error("[intents/POST] ElevenLabs agent prompt sync error (non-fatal):", e)
     );
 
     return NextResponse.json({ intent }, { status: 201 })
@@ -94,4 +98,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

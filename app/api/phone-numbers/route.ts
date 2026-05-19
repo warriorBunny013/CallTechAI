@@ -1,27 +1,33 @@
 /**
  * Phone Numbers API (multi-tenant by organisation_id).
- * phone_numbers.phone_number = clinic number (E.164) that customers call.
- * Uses Vapi API only: POST https://api.vapi.ai/phone-number (not /v1/phone-numbers).
+ *
+ * POST: Import a Twilio phone number. Configures Twilio webhook to point to our
+ *       /api/webhooks/twilio endpoint so ElevenLabs handles inbound calls.
+ * GET:  List all phone numbers for the current org.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getSupabaseService } from '@/lib/supabase/service'
 import { getCurrentUserAndOrg } from '@/lib/org'
-import { setVapiPhoneNumberAssistant, setVapiPhoneNumberServerUrl } from '@/lib/vapi-phone-number'
-import { fetchVapiAssistantVoiceConfig } from '@/lib/vapi-fetch-assistant'
-import { getVapiAssistantById } from '@/lib/vapi-assistants'
 
-const VAPI_PHONE_BASE = 'https://api.vapi.ai'
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ??
+  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://calltechai.com')
 
-// GET: List all phone numbers for the current user's organisation
-export async function GET(request: NextRequest) {
+function normalizeE164(phone: string): string {
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  return phone.startsWith('+') ? phone : `+${digits}`
+}
+
+// GET: List all phone numbers for the current org
+export async function GET() {
   try {
     const userAndOrg = await getCurrentUserAndOrg()
     if (!userAndOrg) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const supabase = await createClient()
@@ -32,272 +38,162 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
 
     if (error) {
-      console.error('Supabase error:', error)
-      return NextResponse.json(
-        { error: 'Failed to fetch phone numbers' },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'Failed to fetch phone numbers' }, { status: 500 })
     }
 
-    // Enrich with assistant names from Vapi for custom assistants (e.g. Daniel)
-    const enriched = await Promise.all(
-      (phoneNumbers || []).map(async (p: Record<string, unknown>) => {
-        const vid = p.vapi_assistant_id as string | undefined
-        if (!vid) return p
-        const predefined = getVapiAssistantById(vid)
-        if (predefined) {
-          return { ...p, assistant_name: predefined.name }
-        }
-        const config = await fetchVapiAssistantVoiceConfig(vid)
-        return { ...p, assistant_name: config?.name ?? 'Assistant' }
-      })
-    )
+    // Enrich with org's agent name
+    const { data: settings } = await supabase
+      .from('organisation_settings')
+      .select('agent_name')
+      .eq('organisation_id', userAndOrg.organisationId)
+      .maybeSingle()
+
+    const agentName = (settings as Record<string, unknown> | null)?.agent_name ?? null
+
+    const enriched = (phoneNumbers ?? []).map((p: Record<string, unknown>) => ({
+      ...p,
+      assistant_name: agentName ?? 'AI Assistant',
+    }))
 
     return NextResponse.json({ phoneNumbers: enriched })
-  } catch (error) {
-    console.error('API error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+  } catch (err) {
+    console.error('[phone-numbers GET] Error:', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-// POST: Create a new phone number via Vapi (free US number) OR import Twilio number into Vapi.
-// Two types:
-// 1. Free Vapi number: { type: "vapi", areaCode: "415" }
-// 2. Import Twilio: { type: "twilio", phoneNumber: "+14155551234", twilioAccountSid: "...", twilioAuthToken: "..." }
+// POST: Import a Twilio phone number and configure its webhook
 export async function POST(request: NextRequest) {
   try {
     const userAndOrg = await getCurrentUserAndOrg()
     if (!userAndOrg) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const body = await request.json()
-    const { type, areaCode, countryCode, phoneNumber, twilioAccountSid, twilioAuthToken, smsEnabled, label } = body as {
-      type?: 'vapi' | 'twilio'
-      areaCode?: string
-      countryCode?: string
+    const { phoneNumber, twilioAccountSid, twilioAuthToken, label, countryCode } = body as {
       phoneNumber?: string
       twilioAccountSid?: string
       twilioAuthToken?: string
-      smsEnabled?: boolean
       label?: string
+      countryCode?: string
     }
 
-    const vapiApiKey = process.env.VAPI_API_KEY
-    if (!vapiApiKey || vapiApiKey === 'your_vapi_api_key_here') {
-      return NextResponse.json(
-        { error: 'VAPI API key not configured' },
-        { status: 500 }
-      )
+    if (!phoneNumber) {
+      return NextResponse.json({ error: 'Phone number is required' }, { status: 400 })
+    }
+    if (!twilioAccountSid) {
+      return NextResponse.json({ error: 'Twilio Account SID is required' }, { status: 400 })
+    }
+    if (!twilioAuthToken) {
+      return NextResponse.json({ error: 'Twilio Auth Token is required' }, { status: 400 })
     }
 
-    let vapiPhoneNumber: { id?: string; number?: string; message?: string; error?: string }
-    let numberType: 'free' | 'imported'
-    let e164Number: string
-    let twilioSid: string | null = null
-    let twilioToken: string | null = null
+    const e164Number = normalizeE164(phoneNumber)
 
-    if (type === 'twilio' || (phoneNumber && twilioAccountSid)) {
-      // Import Twilio number into Vapi
-      if (!phoneNumber || !twilioAccountSid) {
-        return NextResponse.json(
-          { error: 'Twilio phone number and Account SID are required' },
-          { status: 400 }
-        )
-      }
-
-      // Normalize phone number to E.164
-      const normalized = phoneNumber.replace(/\s+/g, '').replace(/^\+?1?/, '+1')
-      if (!normalized.startsWith('+')) {
-        return NextResponse.json(
-          { error: 'Phone number must be in E.164 format (e.g., +14155551234)' },
-          { status: 400 }
-        )
-      }
-
-      const createBody = {
-        provider: 'twilio' as const,
-        number: normalized,
-        twilioAccountSid,
-        twilioAuthToken: twilioAuthToken || undefined,
-        smsEnabled: smsEnabled !== false, // default true
-        name: label || `CallTechAI-${userAndOrg.organisationId.slice(0, 8)}`,
-      }
-
-      const createRes = await fetch(`${VAPI_PHONE_BASE}/phone-number`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${vapiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(createBody),
-      })
-
-      const raw = await createRes.text()
-      try {
-        vapiPhoneNumber = raw ? JSON.parse(raw) : {}
-      } catch {
-        vapiPhoneNumber = { message: raw || 'Invalid response' }
-      }
-
-      if (!createRes.ok) {
-        const msg = vapiPhoneNumber?.message || vapiPhoneNumber?.error || raw || `Vapi returned ${createRes.status}`
-        const msgStr = typeof msg === 'string' ? msg : String(msg)
-
-        // VAPI returns "Existing Phone Number {id} Has Identical twilioAccountSid and number" when the number is already in VAPI.
-        // Re-use that existing VAPI phone number and add our DB row so the user can use it (e.g. re-adding after delete, or same number in same org).
-        const existingIdMatch = msgStr.match(/Existing Phone Number\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i)
-        if (existingIdMatch) {
-          const existingVapiId = existingIdMatch[1]
-          vapiPhoneNumber = { id: existingVapiId, number: normalized }
-          numberType = 'imported'
-          e164Number = normalized
-          twilioSid = twilioAccountSid
-          twilioToken = twilioAuthToken || null
-          await setVapiPhoneNumberServerUrl(existingVapiId, vapiApiKey)
-        } else {
-          console.error('VAPI Twilio import error:', createRes.status, msgStr, raw)
-          return NextResponse.json(
-            { error: msgStr || 'Failed to import Twilio number into Vapi' },
-            { status: createRes.status >= 400 ? createRes.status : 500 }
-          )
-        }
-      } else {
-        numberType = 'imported'
-        e164Number = normalized
-        twilioSid = twilioAccountSid
-        twilioToken = twilioAuthToken || null
-      }
-    } else {
-      // Create free Vapi number
-      const area = (areaCode && String(areaCode).replace(/\D/g, '').slice(0, 3)) || '415'
-      const createBody = {
-        provider: 'vapi' as const,
-        numberDesiredAreaCode: area,
-        name: label || `CallTechAI-${userAndOrg.organisationId.slice(0, 8)}`,
-      }
-
-      const createRes = await fetch(`${VAPI_PHONE_BASE}/phone-number`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${vapiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(createBody),
-      })
-
-      const raw = await createRes.text()
-      try {
-        vapiPhoneNumber = raw ? JSON.parse(raw) : {}
-      } catch {
-        vapiPhoneNumber = { message: raw || 'Invalid response' }
-      }
-
-      if (!createRes.ok) {
-        const msg = vapiPhoneNumber?.message || vapiPhoneNumber?.error || `Vapi returned ${createRes.status}`
-        console.error('VAPI phone create error:', createRes.status, msg, raw)
-        return NextResponse.json(
-          { error: msg || 'Failed to create phone number with Vapi' },
-          { status: createRes.status >= 400 ? createRes.status : 500 }
-        )
-      }
-
-      numberType = 'free'
-      e164Number = vapiPhoneNumber.number || `+1${area}***`
-    }
-
-    const vapiId = vapiPhoneNumber.id
-    if (!vapiId) {
-      console.error('VAPI response missing id:', vapiPhoneNumber)
-      return NextResponse.json(
-        { error: 'Vapi did not return a phone number ID' },
-        { status: 500 }
-      )
-    }
-
-    // Update e164Number from Vapi response if available
-    if (vapiPhoneNumber.number) {
-      e164Number = vapiPhoneNumber.number
-    }
-
-    const supabase = await createClient()
-    const normaliseForMatch = (p: string | undefined | null): string => (p == null ? '' : p.replace(/\D/g, ''))
+    // Use service client for inserts (bypasses RLS)
+    const supabase = getSupabaseService()
+    const normalizeDigits = (p: string) => p.replace(/\D/g, '')
     const { data: existingRows } = await supabase
       .from('phone_numbers')
       .select('id, phone_number')
       .eq('organisation_id', userAndOrg.organisationId)
-    const alreadyHasNumber = (existingRows ?? []).some(
-      (row: { phone_number?: string }) => normaliseForMatch(row.phone_number) === normaliseForMatch(e164Number)
+
+    const alreadyExists = (existingRows ?? []).some(
+      (row: { phone_number?: string }) =>
+        normalizeDigits(row.phone_number ?? '') === normalizeDigits(e164Number)
     )
-    if (alreadyHasNumber) {
+    if (alreadyExists) {
       return NextResponse.json(
-        { error: 'This number is already in your dashboard. Add a different number or remove it first.' },
+        { error: 'This number is already in your dashboard.' },
         { status: 400 }
       )
     }
 
-    // Set server URL (webhook) on VAPI phone number so call completion webhooks are sent
-    await setVapiPhoneNumberServerUrl(vapiId, vapiApiKey)
+    // Configure Twilio webhook on this number to point to our inbound call handler
+    const webhookUrl = `${APP_URL}/api/webhooks/twilio`
+    let twilioConfigured = false
 
-    // Sync assistant to VAPI: set the org's selected voice agent on this phone number
-    const { data: org } = await supabase
-      .from('organisations')
-      .select('selected_voice_agent_id')
-      .eq('id', userAndOrg.organisationId)
-      .single()
-    const assistantId = (org as { selected_voice_agent_id?: string } | null)?.selected_voice_agent_id ?? null
-    if (assistantId) {
-      await setVapiPhoneNumberAssistant(vapiId, assistantId, vapiApiKey)
-    }
-
-    const insertData: any = {
-      organisation_id: userAndOrg.organisationId,
-      user_id: userAndOrg.userId,
-      vapi_phone_number_id: vapiId,
-      phone_number: e164Number,
-      country_code: countryCode || 'US',
-      number_type: numberType,
-      is_active: true,
-    }
-
-    // Store Twilio credentials only for imported numbers
-    if (numberType === 'imported') {
-      insertData.twilio_account_sid = twilioSid
-      if (twilioToken) {
-        insertData.twilio_auth_token = twilioToken
+    try {
+      // Use Twilio REST API to update incoming call webhook
+      const twilioApiUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/IncomingPhoneNumbers.json`
+      const searchRes = await fetch(
+        `${twilioApiUrl}?PhoneNumber=${encodeURIComponent(e164Number)}`,
+        {
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64')}`,
+          },
+        }
+      )
+      if (searchRes.ok) {
+        const searchData = await searchRes.json()
+        const numbers = searchData.incoming_phone_numbers ?? []
+        if (numbers.length > 0) {
+          const twilioNumberSid = numbers[0].sid
+          const updateRes = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/IncomingPhoneNumbers/${twilioNumberSid}.json`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64')}`,
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: new URLSearchParams({
+                VoiceUrl: webhookUrl,
+                VoiceMethod: 'POST',
+                StatusCallback: `${webhookUrl}?status=1`,
+                StatusCallbackMethod: 'GET',
+              }).toString(),
+            }
+          )
+          twilioConfigured = updateRes.ok
+          if (!updateRes.ok) {
+            const errText = await updateRes.text()
+            console.warn('[phone-numbers] Twilio webhook update failed:', updateRes.status, errText)
+          }
+        }
       }
+    } catch (e) {
+      console.warn('[phone-numbers] Twilio webhook setup error (number saved anyway):', e)
     }
 
     const { data: savedPhoneNumber, error: dbError } = await supabase
       .from('phone_numbers')
-      .insert(insertData)
+      .insert({
+        organisation_id: userAndOrg.organisationId,
+        user_id: userAndOrg.userId,
+        phone_number: e164Number,
+        country_code: countryCode ?? 'US',
+        number_type: 'imported',
+        is_active: true,
+        twilio_account_sid: twilioAccountSid,
+        twilio_auth_token: twilioAuthToken,
+        label: label ?? null,
+      } as Record<string, unknown>)
       .select()
       .single()
 
     if (dbError) {
-      console.error('Database error:', dbError)
-      return NextResponse.json(
-        { error: 'Failed to save phone number to database' },
-        { status: 500 }
-      )
+      console.error('[phone-numbers] DB insert error:', dbError.message, dbError.details, dbError.hint)
+      return NextResponse.json({ error: `Failed to save phone number: ${dbError.message}` }, { status: 500 })
     }
 
     return NextResponse.json(
-      { phoneNumber: savedPhoneNumber, vapiResponse: vapiPhoneNumber },
+      {
+        phoneNumber: savedPhoneNumber,
+        webhookConfigured: twilioConfigured,
+        webhookUrl,
+        message: twilioConfigured
+          ? 'Phone number added and Twilio webhook configured.'
+          : 'Phone number added. Please configure the webhook manually in Twilio console.',
+      },
       { status: 201 }
     )
-  } catch (error: unknown) {
-    console.error('API error:', error)
+  } catch (err) {
+    console.error('[phone-numbers POST] Error:', err)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal server error' },
+      { error: err instanceof Error ? err.message : 'Internal server error' },
       { status: 500 }
     )
   }
 }
-

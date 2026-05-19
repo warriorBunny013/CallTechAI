@@ -1,0 +1,333 @@
+/**
+ * ElevenLabs Conversational AI Agent Manager
+ *
+ * Handles creating, updating, and deleting ElevenLabs agents for CallTechAI organisations.
+ * Each organisation gets their own ElevenLabs agent configured with:
+ *   - Custom voice + language
+ *   - System prompt (with org intents injected)
+ *   - First message
+ *   - Webhook tools for Google Calendar (check-availability, book-appointment)
+ */
+
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+
+function getAppUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL ?? "";
+  // In production the env var should be the full https:// URL
+  if (configured && !configured.includes("localhost") && !configured.startsWith("http")) {
+    return `https://${configured}`;
+  }
+  if (configured && configured.startsWith("http")) return configured;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "https://calltechai.com";
+}
+
+const APP_URL = getAppUrl();
+
+function getClient(): ElevenLabsClient {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) throw new Error("ELEVENLABS_API_KEY not configured");
+  return new ElevenLabsClient({ apiKey });
+}
+
+export interface ElevenLabsAgentConfig {
+  name: string;
+  orgId: string;
+  orgName: string;
+  voiceId: string;
+  /** Primary language (ISO 639-1). Use `languages` when setting multiple. */
+  language?: string;
+  /** Primary + additional languages for the agent (first = primary). */
+  languages?: string[];
+  systemPrompt: string;
+  firstMessage: string;
+  /** When true, registers checkAvailability + bookAppointment webhook tools */
+  hasCalendarTools?: boolean;
+  /** ElevenLabs knowledge base document IDs to attach */
+  knowledgeBaseDocIds?: string[];
+}
+
+function buildLanguagePresets(languageCodes: string[]): Record<string, { overrides: { agent: null; asr: null } }> {
+  const presets: Record<string, { overrides: { agent: null; asr: null } }> = {};
+  for (const code of languageCodes.slice(1)) {
+    presets[code] = { overrides: { agent: null, asr: null } };
+  }
+  return presets;
+}
+
+function resolvePrimaryLanguage(config: { language?: string; languages?: string[] }): string {
+  if (Array.isArray(config.languages) && config.languages.length > 0) {
+    return config.languages[0];
+  }
+  return config.language ?? "en";
+}
+
+function buildCalendarWebhookTools(orgId: string) {
+  return [
+    {
+      type: "webhook" as const,
+      name: "checkAvailability",
+      description:
+        "Check available appointment slots for a specific date. Call this before booking to find open times.",
+      responseTimeoutSecs: 30,
+      apiSchema: {
+        url: `${APP_URL}/api/tools/check-availability`,
+        method: "POST" as const,
+        requestBodySchema: {
+          type: "object",
+          properties: {
+            org_id: {
+              type: "string",
+              description: `Organisation ID — always use "${orgId}"`,
+            },
+            date: {
+              type: "string",
+              description: "Date to check in YYYY-MM-DD format (e.g. 2026-12-20)",
+            },
+          },
+          required: ["org_id", "date"],
+        },
+      },
+    },
+    {
+      type: "webhook" as const,
+      name: "bookAppointment",
+      description:
+        "Book an appointment after the caller confirms their preferred date, time, name, and email.",
+      responseTimeoutSecs: 45,
+      apiSchema: {
+        url: `${APP_URL}/api/tools/book-appointment`,
+        method: "POST" as const,
+        requestBodySchema: {
+          type: "object",
+          properties: {
+            org_id: {
+              type: "string",
+              description: `Organisation ID — always use "${orgId}"`,
+            },
+            date: { type: "string", description: "Appointment date in YYYY-MM-DD format" },
+            time: { type: "string", description: "Appointment time, e.g. '10:30 AM'" },
+            customer_name: { type: "string", description: "Full name of the caller" },
+            customer_email: { type: "string", description: "Caller's email for calendar invite" },
+            customer_phone: { type: "string", description: "Caller's phone number (optional)" },
+            purpose: { type: "string", description: "Purpose of appointment, e.g. 'consultation'" },
+          },
+          required: ["org_id", "date", "time", "customer_name", "customer_email", "purpose"],
+        },
+      },
+    },
+  ];
+}
+
+/**
+ * Builds the appointment-scheduler system prompt with org_id injected
+ * so the LLM passes it in all tool calls.
+ */
+export function buildAppointmentSchedulerPrompt(
+  orgId: string,
+  orgName: string,
+  agentName: string,
+  customPrompt?: string | null
+): string {
+  const base =
+    customPrompt?.trim() ||
+    `You are ${agentName}, a friendly AI voice assistant for ${orgName}.
+
+Your primary purpose is to help callers book appointments and answer questions about ${orgName}.
+
+## Appointment Booking
+
+You have two tools to handle appointment booking through Google Calendar:
+
+### checkAvailability
+Call this FIRST when a caller wants to book or asks about available times.
+- Ask: "What date works best for you?"
+- Call checkAvailability with the date in YYYY-MM-DD format
+- Read out the available slots: "I have openings at 10:00 AM and 2:00 PM — which works best?"
+
+### bookAppointment
+Call this ONLY after the caller confirms a specific date and time.
+Before calling, collect ALL of the following:
+1. customer_name — "Could I get your full name?"
+2. customer_email — "What email address should I send the calendar invite to?"
+3. date — confirmed in YYYY-MM-DD format
+4. time — confirmed in HH:MM AM/PM format
+5. purpose — "What is this appointment for?" (e.g. "consultation", "checkup")
+
+After booking, confirm: "You're all set! Your [purpose] is booked for [date] at [time]. A calendar invite will be sent to [email]."
+
+## Conversation Style
+- Keep responses brief and natural for a phone call
+- Speak one sentence at a time
+- Ask only one question at a time
+- Always be warm, professional, and helpful
+
+Current date: {{current_date}}`;
+
+  // Always append the org_id instruction so the LLM includes it in tool calls
+  return (
+    base +
+    `\n\n## IMPORTANT — Tool Calls
+Always include "org_id": "${orgId}" in every tool call you make. Never omit this field.`
+  );
+}
+
+/**
+ * Creates a new ElevenLabs Conversational AI agent for an organisation.
+ * Returns the ElevenLabs agent ID.
+ */
+export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Promise<string> {
+  const client = getClient();
+
+  const fullPrompt =
+    config.systemPrompt +
+    `\n\n## IMPORTANT — Tool Calls\nAlways include "org_id": "${config.orgId}" in every tool call you make. Never omit this field.`;
+
+  const tools =
+    config.hasCalendarTools !== false
+      ? buildCalendarWebhookTools(config.orgId)
+      : [];
+
+  const knowledgeBase = (config.knowledgeBaseDocIds ?? []).map((id) => ({
+    type: "text" as const,
+    id,
+    name: id,
+  }));
+
+  const primaryLanguage = resolvePrimaryLanguage(config);
+  const additionalLanguages = Array.isArray(config.languages) ? config.languages : [];
+  const languagePresets = buildLanguagePresets(additionalLanguages);
+
+  const agent = await client.conversationalAi.agents.create({
+    name: config.name,
+    conversationConfig: {
+      agent: {
+        firstMessage: config.firstMessage,
+        language: primaryLanguage,
+        prompt: {
+          prompt: fullPrompt,
+          llm: "gpt-4o",
+          temperature: 0.7,
+          ...(tools.length > 0 ? { tools } : {}),
+          ...(knowledgeBase.length > 0 ? { knowledgeBase: knowledgeBase as never } : {}),
+        },
+      },
+      tts: {
+        voiceId: config.voiceId,
+        stability: 0.5,
+        similarityBoost: 0.75,
+      },
+      ...(Object.keys(languagePresets).length > 0 ? { languagePresets } : {}),
+    },
+  });
+
+  const agentId = (agent as { agentId?: string; agent_id?: string }).agentId
+    ?? (agent as { agent_id?: string }).agent_id;
+  if (!agentId) throw new Error("ElevenLabs did not return agent_id");
+  return agentId;
+}
+
+export interface ElevenLabsAgentUpdate {
+  name?: string;
+  voiceId?: string;
+  language?: string;
+  languages?: string[];
+  systemPrompt?: string;
+  firstMessage?: string;
+  orgId?: string;
+  orgName?: string;
+}
+
+/**
+ * Updates only the system prompt text on an agent (preserves tools, KB, LLM settings).
+ */
+export async function updateElevenLabsAgentPrompt(
+  agentId: string,
+  systemPrompt: string
+): Promise<void> {
+  const client = getClient();
+  await client.conversationalAi.agents.update(agentId, {
+    conversationConfig: {
+      agent: {
+        prompt: {
+          prompt: systemPrompt,
+        },
+      },
+    },
+  } as never);
+}
+
+/**
+ * Updates an existing ElevenLabs agent's configuration.
+ */
+export async function updateElevenLabsAgent(
+  agentId: string,
+  update: ElevenLabsAgentUpdate
+): Promise<void> {
+  const client = getClient();
+
+  const patchBody: Record<string, unknown> = {};
+
+  if (update.name) {
+    patchBody.name = update.name;
+  }
+
+  const conversationConfig: Record<string, unknown> = {};
+  const agentConfig: Record<string, unknown> = {};
+  const ttsConfig: Record<string, unknown> = {};
+
+  const languages = update.languages;
+  if (languages && languages.length > 0) {
+    agentConfig.language = languages[0];
+    conversationConfig.languagePresets = buildLanguagePresets(languages);
+  } else if (update.language) {
+    agentConfig.language = update.language;
+  }
+  if (update.firstMessage) {
+    agentConfig.firstMessage = update.firstMessage;
+  }
+  if (update.systemPrompt && update.orgId && update.orgName) {
+    const resolvedName = update.name ?? "Assistant";
+    agentConfig.prompt = {
+      prompt: buildAppointmentSchedulerPrompt(
+        update.orgId,
+        update.orgName,
+        resolvedName,
+        update.systemPrompt
+      ),
+    };
+  }
+  if (update.voiceId) {
+    ttsConfig.voiceId = update.voiceId;
+  }
+
+  if (Object.keys(agentConfig).length > 0) {
+    conversationConfig.agent = agentConfig;
+  }
+  if (Object.keys(ttsConfig).length > 0) {
+    conversationConfig.tts = ttsConfig;
+  }
+  if (Object.keys(conversationConfig).length > 0) {
+    patchBody.conversationConfig = conversationConfig;
+  }
+
+  if (Object.keys(patchBody).length === 0) return;
+
+  await client.conversationalAi.agents.update(agentId, patchBody as never);
+}
+
+/**
+ * Deletes an ElevenLabs agent.
+ */
+export async function deleteElevenLabsAgent(agentId: string): Promise<void> {
+  const client = getClient();
+  await client.conversationalAi.agents.delete(agentId);
+}
+
+/**
+ * Fetches the current config of an ElevenLabs agent.
+ */
+export async function getElevenLabsAgent(agentId: string) {
+  const client = getClient();
+  return client.conversationalAi.agents.get(agentId);
+}

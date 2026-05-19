@@ -1,15 +1,14 @@
 /**
  * Call logs for the current user's organisation.
- * Fetches from both Supabase and VAPI: recordings for phone numbers added in the dashboard.
- * VAPI is the source of truth for recordings; we merge with our DB for metadata.
+ * Fetches from Supabase (single source of truth after ElevenLabs migration).
+ * The ElevenLabs post-call webhook populates transcript, summary, recording_url,
+ * and duration_seconds once each call ends.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserAndOrg } from "@/lib/org";
-import { fetchVapiCallsForPhoneNumber, type VapiCall } from "@/lib/vapi-fetch-calls";
 
-/** Normalise phone to digits for comparison (E.164 may have + or spaces). */
 function normalisePhoneForMatch(p: string | null | undefined): string {
   if (p == null || typeof p !== "string") return "";
   return p.replace(/\D/g, "").trim() || p.trim();
@@ -27,10 +26,9 @@ function extractAnalysisText(v: unknown): string {
   if (typeof v === "string") return v;
   if (typeof v === "object") {
     const o = v as Record<string, unknown>;
-    for (const key of ["text", "content", "summary", "transcript", "insights", "analysis"]) {
+    for (const key of ["transcript_summary", "text", "content", "summary", "transcript", "insights", "analysis"]) {
       if (typeof o[key] === "string") return o[key] as string;
     }
-    if (typeof o.summary === "string") return o.summary;
     try {
       return JSON.stringify(o).slice(0, 200) + "...";
     } catch {
@@ -40,102 +38,34 @@ function extractAnalysisText(v: unknown): string {
   return String(v);
 }
 
-function transformVapiCallToLog(
-  vapiCall: VapiCall,
-  assistantPhoneNumber: string
-): {
-  id: string;
-  phoneNumber: string;
-  configuredPhoneNumber: string;
-  isWebCall: boolean;
-  date: string;
-  time: string;
-  duration: string;
-  durationSeconds: number;
-  status: string;
-  recordingUrl: string | null;
-  analysis: string;
-  createdAt: string;
-  hasBooking: boolean;
-} {
-  const createdAtRaw =
-    vapiCall.endedAt ?? vapiCall.startedAt ?? vapiCall.createdAt ?? "";
-  const date = createdAtRaw ? new Date(createdAtRaw).toISOString().split("T")[0] : "";
-  const time = createdAtRaw
-    ? new Date(createdAtRaw).toLocaleTimeString("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-    : "";
-  let durationSeconds = 0;
-  if (vapiCall.endedAt && vapiCall.startedAt) {
-    durationSeconds = Math.floor(
-      (new Date(vapiCall.endedAt).getTime() - new Date(vapiCall.startedAt).getTime()) / 1000
-    );
-  } else if ((vapiCall as { duration?: number }).duration) {
-    durationSeconds = Math.floor(Number((vapiCall as { duration?: number }).duration) / 1000);
-  }
-  const phoneNumber =
-    (vapiCall.customer as { number?: string } | undefined)?.number ?? assistantPhoneNumber ?? "";
-  const status =
-    vapiCall.status === "ended" || vapiCall.status === "completed" ? "pass" : "fail";
-
-  return {
-    id: vapiCall.id,
-    phoneNumber,
-    configuredPhoneNumber: assistantPhoneNumber,
-    isWebCall: !phoneNumber,
-    date,
-    time,
-    duration: formatDuration(durationSeconds),
-    durationSeconds,
-    status,
-    recordingUrl: vapiCall.recordingUrl ?? vapiCall.recording ?? null,
-    analysis: extractAnalysisText(vapiCall.analysis ?? vapiCall.summary ?? vapiCall.transcript),
-    createdAt: createdAtRaw || new Date().toISOString(),
-    hasBooking: false, // populated after merge
-  };
-}
-
 export async function GET(request: NextRequest) {
   try {
     const userAndOrg = await getCurrentUserAndOrg();
     if (!userAndOrg) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const supabase = await createClient();
     const orgId = userAndOrg.organisationId;
-    const vapiApiKey = process.env.VAPI_API_KEY;
 
-    // 1. Get phone numbers added in the dashboard (with vapi_phone_number_id for VAPI fetch)
+    // 1. Get phone numbers for this org (to filter calls by assistant number)
     const { data: orgPhones, error: phonesError } = await supabase
       .from("phone_numbers")
-      .select("phone_number, vapi_phone_number_id")
+      .select("phone_number")
       .eq("organisation_id", orgId);
 
     if (phonesError) {
       console.error("[call-logs] Error fetching phone numbers:", phonesError);
-      return NextResponse.json(
-        { error: "Failed to fetch phone numbers" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Failed to fetch phone numbers" }, { status: 500 });
     }
 
     const orgPhoneSet = new Set(
       (orgPhones ?? [])
-        .map((r) => (r as { phone_number: string }).phone_number)
+        .map((r) => normalisePhoneForMatch((r as { phone_number: string }).phone_number))
         .filter(Boolean)
-        .map((p) => normalisePhoneForMatch(p))
     );
 
-    const phoneRows = (orgPhones ?? []) as { phone_number: string; vapi_phone_number_id?: string }[];
-
-    // 2. Fetch appointments to tag calls where a booking was made
+    // 2. Fetch appointments to tag calls that had a booking
     const { data: appointments } = await supabase
       .from("appointments")
       .select("call_id")
@@ -148,25 +78,11 @@ export async function GET(request: NextRequest) {
         .filter(Boolean)
     );
 
-    // 3. Fetch calls from VAPI for each dashboard phone number (source of recordings)
-    const vapiCallsByVapiId = new Map<string, ReturnType<typeof transformVapiCallToLog>>();
-    if (vapiApiKey && vapiApiKey !== "your_vapi_api_key_here") {
-      for (const row of phoneRows) {
-        const vapiId = row.vapi_phone_number_id;
-        if (!vapiId) continue;
-        const vapiCalls = await fetchVapiCallsForPhoneNumber(vapiId, 100, vapiApiKey);
-        for (const c of vapiCalls) {
-          const log = transformVapiCallToLog(c, row.phone_number);
-          vapiCallsByVapiId.set(c.id, log);
-        }
-      }
-    }
-
-    // 4. Fetch calls from Supabase (our DB - may have metadata from webhooks)
+    // 3. Fetch calls from our DB (populated by ElevenLabs post-call webhook)
     const { data: dbCalls, error } = await supabase
       .from("calls")
       .select(
-        "id, vapi_call_id, caller_phone_number, assistant_phone_number, call_status, duration_seconds, recording_url, transcript, summary, analysis, started_at, created_at"
+        "id, caller_phone_number, assistant_phone_number, call_status, duration_seconds, recording_url, transcript, summary, analysis, metadata, started_at, ended_at, created_at"
       )
       .eq("organisation_id", orgId)
       .order("created_at", { ascending: false })
@@ -174,42 +90,25 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error("[call-logs] Supabase error:", error);
-      return NextResponse.json(
-        { error: "Failed to fetch call logs" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Failed to fetch call logs" }, { status: 500 });
     }
 
-    // 5. Filter DB calls to dashboard numbers only
-    const filteredDbCalls =
+    // 4. Filter to calls on this org's registered numbers only (when phone set is populated)
+    const filteredCalls =
       orgPhoneSet.size === 0
-        ? []
+        ? (dbCalls ?? [])
         : (dbCalls ?? []).filter((call: Record<string, unknown>) => {
-            const assistantNum = (call.assistant_phone_number as string) ?? "";
-            const key = normalisePhoneForMatch(assistantNum);
-            return key ? orgPhoneSet.has(key) : false;
+            const assistantNum = normalisePhoneForMatch(call.assistant_phone_number as string);
+            return assistantNum ? orgPhoneSet.has(assistantNum) : true;
           });
 
-    // 6. Merge: prefer VAPI for recordingUrl when available; use DB for calls not in VAPI
-    const seenVapiIds = new Set<string>();
-    const merged: {
-      id: string; phoneNumber: string; configuredPhoneNumber: string; isWebCall: boolean;
-      date: string; time: string; duration: string; durationSeconds: number;
-      status: string; recordingUrl: string | null; analysis: string; createdAt: string;
-      hasBooking: boolean;
-    }[] = [];
-
-    for (const vapiLog of vapiCallsByVapiId.values()) {
-      merged.push({ ...vapiLog, hasBooking: bookedCallIds.has(vapiLog.id) });
-      seenVapiIds.add(vapiLog.id);
-    }
-
-    for (const call of filteredDbCalls as (Record<string, unknown> & { vapi_call_id?: string })[]) {
-      const vapiId = call.vapi_call_id as string | undefined;
-      if (vapiId && seenVapiIds.has(vapiId)) continue;
-      const phoneNumber =
-        (call.caller_phone_number as string) || (call.assistant_phone_number as string) || null;
-      const createdAtRaw = (call.started_at as string) || (call.created_at as string) || "";
+    // 5. Transform to unified log format
+    const logs = filteredCalls.map((call: Record<string, unknown>) => {
+      const createdAtRaw =
+        (call.ended_at as string) ??
+        (call.started_at as string) ??
+        (call.created_at as string) ??
+        "";
       const date = createdAtRaw ? new Date(createdAtRaw).toISOString().split("T")[0] : "";
       const time = createdAtRaw
         ? new Date(createdAtRaw).toLocaleTimeString("en-US", {
@@ -219,13 +118,23 @@ export async function GET(request: NextRequest) {
           })
         : "";
       const durationSeconds = Number(call.duration_seconds) || 0;
-      const status = call.call_status === "completed" || call.call_status === "success" ? "pass" : "fail";
-      const callId = (call.id as string) ?? vapiId ?? `db-${call.id}`;
-      merged.push({
+      const status =
+        call.call_status === "completed" || call.call_status === "done" || call.call_status === "success"
+          ? "pass"
+          : call.call_status === "initiated"
+          ? "in_progress"
+          : "fail";
+
+      const callId = call.id as string;
+      const meta = (call.metadata ?? {}) as Record<string, unknown>;
+      const elevenLabsConversationId =
+        (meta.elevenlabs_conversation_id as string | undefined) ?? null;
+
+      return {
         id: callId,
-        phoneNumber: phoneNumber ?? "",
+        phoneNumber: (call.caller_phone_number as string) ?? "",
         configuredPhoneNumber: (call.assistant_phone_number as string) ?? "",
-        isWebCall: !phoneNumber,
+        isWebCall: !call.caller_phone_number,
         date,
         time,
         duration: formatDuration(durationSeconds),
@@ -233,22 +142,27 @@ export async function GET(request: NextRequest) {
         status,
         recordingUrl: (call.recording_url as string | null) ?? null,
         analysis: extractAnalysisText(
-          call.analysis ?? call.summary ?? call.transcript ?? null
+          (call.analysis as Record<string, unknown> | null)?.transcript_summary ??
+            call.summary ??
+            call.transcript ??
+            null
         ),
+        transcript: (call.transcript as string | null) ?? null,
+        summary: (call.summary as string | null) ?? null,
         createdAt: createdAtRaw || new Date().toISOString(),
-        hasBooking: bookedCallIds.has(callId) || (vapiId ? bookedCallIds.has(vapiId) : false),
-      });
-    }
+        hasBooking:
+          bookedCallIds.has(callId) ||
+          (elevenLabsConversationId ? bookedCallIds.has(elevenLabsConversationId) : false),
+        conversationId: elevenLabsConversationId,
+      };
+    });
 
-    // 7. Sort by createdAt descending
-    merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    // 6. Sort by createdAt descending (already ordered from DB, but re-sort after filter)
+    logs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    return NextResponse.json(merged.slice(0, 500));
+    return NextResponse.json(logs.slice(0, 500));
   } catch (err) {
     console.error("[call-logs] Error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

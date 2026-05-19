@@ -22,42 +22,50 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle } from "lucide-react"
+import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle, Bot } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
-import { getVapiAssistantById } from "@/lib/vapi-assistants"
 
 interface PhoneNumber {
   id: string
   user_id?: string
   organisation_id?: string
-  vapi_phone_number_id: string
   phone_number: string
   country_code: string
   number_type: "free" | "imported"
-  assistant_id?: string
-  vapi_assistant_id?: string
-  assistant_name?: string
+  assistant_id?: string | null
+  elevenlabs_agent_id?: string | null
+  assistant_name?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
 }
 
-interface Assistant {
+interface OrgAssistant {
   id: string
-  vapi_assistant_id: string
+  elevenlabs_agent_id: string
   name: string
+  is_default: boolean
 }
 
 export default function PhoneNumbersPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
-  const [assistants, setAssistants] = useState<Assistant[]>([])
-  const [selectedVoiceAgentId, setSelectedVoiceAgentId] = useState<string | null>(null)
+  const [assistants, setAssistants] = useState<OrgAssistant[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [isConfiguring, setIsConfiguring] = useState<string | null>(null)
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false)
+  const [assignTarget, setAssignTarget] = useState<PhoneNumber | null>(null)
+  const [selectedAssistantId, setSelectedAssistantId] = useState<string>("")
+  const [isAssigning, setIsAssigning] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<PhoneNumber | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -73,10 +81,6 @@ export default function PhoneNumbersPage() {
   useEffect(() => {
     fetchPhoneNumbers()
     fetchAssistants()
-    fetch("/api/organisation")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setSelectedVoiceAgentId(d?.organisation?.selected_voice_agent_id ?? null))
-      .catch(() => {})
   }, [])
 
   const fetchPhoneNumbers = async () => {
@@ -96,7 +100,7 @@ export default function PhoneNumbersPage() {
 
   const fetchAssistants = async () => {
     try {
-      const response = await fetch("/api/assistants")
+      const response = await fetch("/api/assistants/list")
       if (response.ok) {
         const data = await response.json()
         setAssistants(data.assistants || [])
@@ -111,6 +115,10 @@ export default function PhoneNumbersPage() {
       toast({ title: "Error", description: "Phone number and Twilio Account SID are required.", variant: "destructive" })
       return
     }
+    if (!twilioFormData.twilioAuthToken) {
+      toast({ title: "Error", description: "Twilio Auth Token is required.", variant: "destructive" })
+      return
+    }
 
     try {
       setIsCreating(true)
@@ -121,7 +129,7 @@ export default function PhoneNumbersPage() {
           type: "twilio",
           phoneNumber: twilioFormData.phoneNumber,
           twilioAccountSid: twilioFormData.twilioAccountSid,
-          twilioAuthToken: twilioFormData.twilioAuthToken || undefined,
+          twilioAuthToken: twilioFormData.twilioAuthToken,
           smsEnabled: twilioFormData.smsEnabled,
           label: twilioFormData.label || undefined,
         }),
@@ -130,7 +138,10 @@ export default function PhoneNumbersPage() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "Failed to import Twilio number")
 
-      toast({ title: "Success", description: "Twilio number imported. Inbound calls will use your organisation's voice agent." })
+      toast({
+        title: "Number imported!",
+        description: "Inbound calls will be handled by your AI assistant automatically.",
+      })
       setIsDialogOpen(false)
       setTwilioFormData({ phoneNumber: "", twilioAccountSid: "", twilioAuthToken: "", smsEnabled: true, label: "" })
       fetchPhoneNumbers()
@@ -146,34 +157,40 @@ export default function PhoneNumbersPage() {
     }
   }
 
-  const handleConfigureAssistant = async (phoneNumberId: string, vapiAssistantId: string, assistantId?: string) => {
+  const openAssignDialog = (phone: PhoneNumber) => {
+    setAssignTarget(phone)
+    // Pre-select currently linked assistant or default
+    if (phone.assistant_id) {
+      setSelectedAssistantId(phone.assistant_id)
+    } else {
+      const defaultAssistant = assistants.find((a) => a.is_default)
+      setSelectedAssistantId(defaultAssistant?.id ?? assistants[0]?.id ?? "")
+    }
+    setIsAssignDialogOpen(true)
+  }
+
+  const handleAssignAssistant = async () => {
+    if (!assignTarget || !selectedAssistantId) return
+    setIsAssigning(true)
     try {
-      setIsConfiguring(phoneNumberId)
-
-      if (assistantId) {
-        const launchResponse = await fetch("/api/assistants/launch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phoneNumberId, assistantId }),
-        })
-        if (!launchResponse.ok) throw new Error("Failed to launch assistant")
-        toast({ title: "Assistant Launched!", description: "Your phone number is now active and ready to receive calls!" })
-      } else {
-        const response = await fetch(`/api/phone-numbers/${phoneNumberId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ vapiAssistantId }),
-        })
-        if (!response.ok) throw new Error("Failed to configure assistant")
-        toast({ title: "Success", description: "Assistant configured. Inbound calls will now use this assistant." })
-      }
-
+      const response = await fetch("/api/assistants/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phoneNumberId: assignTarget.id,
+          assistantRowId: selectedAssistantId,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Failed to assign assistant")
+      toast({ title: "Assistant assigned", description: data.message ?? "Inbound calls will use this assistant." })
+      setIsAssignDialogOpen(false)
       fetchPhoneNumbers()
     } catch (error) {
-      console.error("Error configuring assistant:", error)
-      toast({ title: "Error", description: "Failed to configure assistant. Please try again.", variant: "destructive" })
+      console.error("Error assigning assistant:", error)
+      toast({ title: "Error", description: "Failed to assign assistant. Please try again.", variant: "destructive" })
     } finally {
-      setIsConfiguring(null)
+      setIsAssigning(false)
     }
   }
 
@@ -185,7 +202,7 @@ export default function PhoneNumbersPage() {
     try {
       const response = await fetch(`/api/phone-numbers/${deleteTarget.id}`, { method: "DELETE" })
       if (!response.ok) throw new Error("Failed to delete phone number")
-      toast({ title: "Deleted", description: "Phone number removed from your dashboard and from the provider." })
+      toast({ title: "Deleted", description: "Phone number removed from your dashboard." })
       setDeleteTarget(null)
       fetchPhoneNumbers()
     } catch (error) {
@@ -194,6 +211,21 @@ export default function PhoneNumbersPage() {
     } finally {
       setIsDeleting(false)
     }
+  }
+
+  const getAssistantName = (phone: PhoneNumber): string | null => {
+    if (phone.assistant_id) {
+      const assistant = assistants.find((a) => a.id === phone.assistant_id)
+      if (assistant) return assistant.name
+    }
+    if (phone.elevenlabs_agent_id) {
+      const assistant = assistants.find((a) => a.elevenlabs_agent_id === phone.elevenlabs_agent_id)
+      if (assistant) return assistant.name
+    }
+    if (phone.assistant_name) return phone.assistant_name
+    // Falls back to org default
+    const defaultAssistant = assistants.find((a) => a.is_default)
+    return defaultAssistant?.name ?? null
   }
 
   return (
@@ -213,7 +245,7 @@ export default function PhoneNumbersPage() {
                 Phone Numbers
               </h1>
               <p className="text-base md:text-lg text-gray-600 dark:text-gray-400 max-w-2xl">
-                Import your Twilio phone number. Customers call this number; inbound calls use your organisation&apos;s voice agent and intents.
+                Import your Twilio phone number. Inbound calls are automatically routed to your AI voice assistant.
               </p>
             </div>
             <Button
@@ -242,7 +274,7 @@ export default function PhoneNumbersPage() {
               </div>
               <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No phone numbers yet</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 text-center mb-6 max-w-sm">
-                Import your existing Twilio number. Customers will call this number; inbound calls use your organisation&apos;s voice agent and intents.
+                Import your Twilio number. Inbound calls will be automatically handled by your AI assistant.
               </p>
               <Button
                 onClick={() => setIsDialogOpen(true)}
@@ -254,92 +286,88 @@ export default function PhoneNumbersPage() {
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {phoneNumbers.map((phone) => (
-                <div
-                  key={phone.id}
-                  className="group p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 hover:border-[#84CC16]/50 dark:hover:border-[#84CC16]/50 hover:shadow-lg hover:shadow-[#84CC16]/5 transition-all duration-300"
-                >
-                  {/* Card Header */}
-                  <div className="flex items-start justify-between mb-5">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-[#84CC16]/10 group-hover:scale-110 transition-transform duration-300">
-                        <Phone className="h-5 w-5 text-[#84CC16]" />
+              {phoneNumbers.map((phone) => {
+                const assistantName = getAssistantName(phone)
+                return (
+                  <div
+                    key={phone.id}
+                    className="group p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 hover:border-[#84CC16]/50 dark:hover:border-[#84CC16]/50 hover:shadow-lg hover:shadow-[#84CC16]/5 transition-all duration-300"
+                  >
+                    {/* Card Header */}
+                    <div className="flex items-start justify-between mb-5">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-xl bg-[#84CC16]/10 group-hover:scale-110 transition-transform duration-300">
+                          <Phone className="h-5 w-5 text-[#84CC16]" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900 dark:text-white font-mono">{phone.phone_number}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+                            {phone.number_type === "free" ? "Free US number" : "Imported from Twilio"}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-bold text-gray-900 dark:text-white font-mono">{phone.phone_number}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
-                          {phone.number_type === "free" ? "Free US number" : "Imported from Twilio"}
-                        </p>
-                      </div>
-                    </div>
-                    {phone.is_active ? (
-                      <Badge className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-0 font-semibold">
-                        <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse mr-1.5" />
-                        Active
-                      </Badge>
-                    ) : (
-                      <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
-                        <XCircle className="h-3 w-3 mr-1" />
-                        Inactive
-                      </Badge>
-                    )}
-                  </div>
-
-                  {/* Country Code */}
-                  <div className="mb-4 p-3 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
-                    <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-0.5">Country Code</p>
-                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{phone.country_code}</p>
-                  </div>
-
-                  {/* Assistant */}
-                  <div className="mb-5">
-                    <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-2">Assistant</p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {phone.vapi_assistant_id ? (
-                        <Badge className="bg-[#84CC16]/10 text-[#84CC16] border border-[#84CC16]/20 font-semibold">
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                          Activated
+                      {phone.is_active ? (
+                        <Badge className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-0 font-semibold">
+                          <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse mr-1.5" />
+                          Active
                         </Badge>
                       ) : (
-                        <>
-                          <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
-                            <XCircle className="h-3 w-3 mr-1" />
-                            Not activated
-                          </Badge>
-                          {selectedVoiceAgentId && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleConfigureAssistant(phone.id, selectedVoiceAgentId)}
-                              disabled={isConfiguring === phone.id}
-                              className="rounded-xl border-[#84CC16]/30 text-[#84CC16] hover:bg-[#84CC16]/10 font-semibold h-7 text-xs"
-                            >
-                              {isConfiguring === phone.id ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                "Activate"
-                              )}
-                            </Button>
-                          )}
-                        </>
+                        <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
+                          <XCircle className="h-3 w-3 mr-1" />
+                          Inactive
+                        </Badge>
                       )}
                     </div>
-                  </div>
 
-                  {/* Actions */}
-                  <div className="pt-4 border-t border-gray-100 dark:border-white/5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDeleteClick(phone)}
-                      className="w-full rounded-xl border-red-200 bg-red-900/10 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
-                    >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Delete Number
-                    </Button>
+                    {/* Country Code */}
+                    <div className="mb-4 p-3 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
+                      <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-0.5">Country Code</p>
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white">{phone.country_code}</p>
+                    </div>
+
+                    {/* AI Assistant */}
+                    <div className="mb-5">
+                      <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-2">AI Assistant</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {assistantName ? (
+                          <Badge className="bg-[#84CC16]/10 text-[#84CC16] border border-[#84CC16]/20 font-semibold gap-1.5">
+                            <Bot className="h-3 w-3" />
+                            {assistantName}
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
+                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                            Org default
+                          </Badge>
+                        )}
+                        {assistants.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openAssignDialog(phone)}
+                            className="h-6 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-2"
+                          >
+                            Change
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="pt-4 border-t border-gray-100 dark:border-white/5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleDeleteClick(phone)}
+                        className="w-full rounded-xl border-red-200 bg-red-900/10 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 font-semibold"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Number
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -357,7 +385,7 @@ export default function PhoneNumbersPage() {
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">Import Phone Number from Twilio</DialogTitle>
             <DialogDescription className="text-gray-600 dark:text-gray-400">
-              Import your existing Twilio phone number. Inbound calls will use your organisation&apos;s voice agent and intents.
+              Import your Twilio phone number. We&apos;ll configure the webhook automatically so inbound calls reach your AI assistant.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -382,23 +410,23 @@ export default function PhoneNumbersPage() {
                 onChange={(e) => setTwilioFormData((prev) => ({ ...prev, twilioAccountSid: e.target.value }))}
                 className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
               />
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Found in Twilio Console → Account → API Keys & Tokens</p>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Found in Twilio Console → Account → API Keys &amp; Tokens</p>
             </div>
             <div>
-              <Label className="font-semibold text-gray-900 dark:text-white">Twilio Auth Token</Label>
+              <Label className="font-semibold text-gray-900 dark:text-white">Twilio Auth Token *</Label>
               <Input
                 type="password"
-                placeholder="Your Twilio auth token (optional)"
+                placeholder="Your Twilio auth token"
                 value={twilioFormData.twilioAuthToken}
                 onChange={(e) => setTwilioFormData((prev) => ({ ...prev, twilioAuthToken: e.target.value }))}
                 className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
               />
-              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Optional. If not provided, Vapi may use your Vapi account&apos;s Twilio credentials.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Required to configure the Twilio webhook automatically.</p>
             </div>
             <div>
               <Label className="font-semibold text-gray-900 dark:text-white">Label (optional)</Label>
               <Input
-                placeholder="Label for phone number"
+                placeholder="Label for this number"
                 value={twilioFormData.label}
                 onChange={(e) => setTwilioFormData((prev) => ({ ...prev, label: e.target.value }))}
                 className="mt-1.5 rounded-xl border-gray-200 dark:border-white/10 focus:border-[#84CC16]"
@@ -407,7 +435,7 @@ export default function PhoneNumbersPage() {
             <div className="flex items-center justify-between p-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
               <div>
                 <Label className="font-semibold text-gray-900 dark:text-white">Enable SMS</Label>
-                <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">Enable SMS messaging for this phone number</p>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-0.5">Enable SMS messaging for this number</p>
               </div>
               <Switch
                 checked={twilioFormData.smsEnabled}
@@ -434,12 +462,58 @@ export default function PhoneNumbersPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Assign Assistant Dialog */}
+      <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <DialogContent className="max-w-md rounded-2xl border-gray-200 dark:border-white/10">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold">Assign AI Assistant</DialogTitle>
+            <DialogDescription className="text-gray-600 dark:text-gray-400">
+              Choose which AI assistant handles inbound calls on{" "}
+              <span className="font-mono font-semibold">{assignTarget?.phone_number}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label className="font-semibold text-gray-900 dark:text-white mb-2 block">Assistant</Label>
+            <Select value={selectedAssistantId} onValueChange={setSelectedAssistantId}>
+              <SelectTrigger className="rounded-xl border-gray-200 dark:border-white/10">
+                <SelectValue placeholder="Select an assistant" />
+              </SelectTrigger>
+              <SelectContent>
+                {assistants.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name}{a.is_default ? " (default)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} className="rounded-xl border-gray-200 dark:border-white/10 font-semibold">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAssignAssistant}
+              disabled={isAssigning || !selectedAssistantId}
+              className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-semibold rounded-xl shadow-lg shadow-[#84CC16]/25"
+            >
+              {isAssigning ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Assigning...</>
+              ) : (
+                "Assign Assistant"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent className="rounded-2xl border-gray-200 dark:border-white/10">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-bold">Delete phone number?</AlertDialogTitle>
             <AlertDialogDescription className="text-gray-600 dark:text-gray-400">
-              This will remove {deleteTarget?.phone_number} from your dashboard and from the provider. This action cannot be undone.
+              This will remove {deleteTarget?.phone_number} from your dashboard. The Twilio webhook will remain
+              until you clear it manually in the Twilio Console. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
