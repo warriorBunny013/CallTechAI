@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseService } from '@/lib/supabase/service'
 import { getCurrentUserAndOrg } from '@/lib/org'
 import { syncOrgIntentsToVapi } from '@/lib/vapi-update-assistant'
+import { syncOrgIntentsToElevenLabsAgents } from '@/lib/elevenlabs-intent-sync'
 
 // Uses the service-role client throughout so Supabase RLS (which relies on
 // auth.uid() / Supabase native sessions) does not block writes.
@@ -73,6 +74,10 @@ export async function PUT(
       console.error('[intents/PUT] VAPI sync error (non-fatal):', e)
     )
 
+    void syncOrgIntentsToElevenLabsAgents(userAndOrg.organisationId).catch((e) =>
+      console.error('[intents/PUT] ElevenLabs agent prompt sync error (non-fatal):', e)
+    )
+
     return NextResponse.json({ intent })
   } catch (error) {
     console.error('[intents/PUT] API error:', error)
@@ -119,6 +124,10 @@ export async function DELETE(
     // Fire-and-forget — VAPI sync failure must not fail the intent delete
     void syncOrgIntentsToVapi(userAndOrg.organisationId, supabase).catch((e) =>
       console.error('[intents/DELETE] VAPI sync error (non-fatal):', e)
+    )
+
+    void syncOrgIntentsToElevenLabsAgents(userAndOrg.organisationId).catch((e) =>
+      console.error('[intents/DELETE] ElevenLabs agent prompt sync error (non-fatal):', e)
     )
 
     return NextResponse.json({ message: 'Intent deleted successfully' })

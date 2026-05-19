@@ -4,12 +4,13 @@
 
 import { NextResponse } from "next/server";
 import { getCurrentUserAndOrg } from "@/lib/org";
-import { VOICE_OPTIONS } from "@/lib/voice-options";
+import { getCuratedVoiceLibraryWithPreviews } from "@/lib/elevenlabs-voices";
 
 export async function GET() {
   const userAndOrg = await getCurrentUserAndOrg();
   if (!userAndOrg) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  return NextResponse.json({ voices: VOICE_OPTIONS });
+  const voices = await getCuratedVoiceLibraryWithPreviews();
+  return NextResponse.json({ voices });
 }

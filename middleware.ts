@@ -9,6 +9,7 @@ const publicPaths = [
   "/terms",
   "/api/webhooks",
   "/api/vapi-tools",
+  "/api/tools",
   "/api/calendar/callback",
   "/demo",
 ];

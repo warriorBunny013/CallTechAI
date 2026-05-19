@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
 import { getSupabaseService } from "@/lib/supabase/service";
-import { getOrganisationIdForUserService } from "@/lib/org";
+import { getOrganisationIdForUser } from "@/lib/org";
 import Stripe from "stripe";
 
 export async function POST(req: NextRequest) {
@@ -82,7 +82,7 @@ async function handleCheckoutSessionCompleted(
   }
 
   const organisationId =
-    metaOrgId ?? (await getOrganisationIdForUserService(userId));
+    metaOrgId ?? (await getOrganisationIdForUser(userId));
 
   if (!organisationId) {
     console.error("No organisationId for user:", userId);
@@ -163,7 +163,7 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
     const meta = (customer as any).metadata ?? {};
     const userId = meta.userId;
     const organisationId =
-      meta.organisationId ?? (await getOrganisationIdForUserService(userId));
+      meta.organisationId ?? (await getOrganisationIdForUser(userId));
 
     if (!userId) {
       console.error(

@@ -1,17 +1,25 @@
 /**
- * Twilio Webhook Handler for Incoming Calls
+ * Twilio Webhook – Inbound Call Handler (ElevenLabs + Twilio)
  *
- * MULTI-TENANT: Call ownership is determined by the number that was CALLED (To = clinic number).
- * - To = clinic number (the number customers dial) → lookup phone_numbers.phone_number = To
- * - From = caller (customer) number
- * - Lookup returns organisation_id; we inject org's intents + voice agent into Vapi.
+ * FLOW:
+ *  1. Twilio receives inbound call on a clinic number.
+ *  2. Twilio POSTs form data here (From, To, CallSid, CallStatus).
+ *  3. We look up the organisation by the called number (To).
+ *  4. We call the ElevenLabs "register call" API, which returns TwiML.
+ *  5. We return that TwiML to Twilio — Twilio then streams audio directly
+ *     to ElevenLabs Conversational AI over WebSocket.
+ *
+ * MULTI-TENANT:
+ *  Call ownership is determined by the number that was CALLED (To = clinic number).
+ *  - To   = clinic number (customers dial this) → lookup phone_numbers.phone_number = To
+ *  - From = caller number
+ *  - Lookup yields organisation_id + selected voice agent.
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import { getSupabaseService } from "@/lib/supabase/service";
-import { buildTransientAssistant } from "@/lib/vapi-call";
-import { fetchVapiAssistantVoiceConfig } from "@/lib/vapi-fetch-assistant";
-import https from "https";
+import { buildConversationInitData, resolveElevenLabsAgentId } from "@/lib/elevenlabs-call";
 
 interface TwilioWebhookBody {
   From: string;
@@ -21,13 +29,19 @@ interface TwilioWebhookBody {
   [key: string]: string;
 }
 
-/** Normalise to E.164 for lookup (Twilio usually sends E.164 already). */
 function normalizeE164(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   if (digits.length >= 10 && !phone.startsWith("+")) {
     return "+" + (digits.length === 10 ? "1" + digits : digits);
   }
   return phone.startsWith("+") ? phone : "+" + phone;
+}
+
+function twimlSay(message: string): NextResponse {
+  return new NextResponse(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Say voice="alice">${message}</Say><Hangup/></Response>`,
+    { status: 200, headers: { "Content-Type": "text/xml" } }
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -43,198 +57,160 @@ export async function POST(req: NextRequest) {
     const callerNumber = body.From;
     const clinicNumber = normalizeE164(body.To);
 
-    console.log(`[Twilio] Incoming call To=${clinicNumber} (clinic) From=${callerNumber} (caller)`);
+    console.log(`[Twilio] Inbound call To=${clinicNumber} From=${callerNumber} CallSid=${body.CallSid}`);
 
     const supabase = getSupabaseService();
 
-    const { data: phoneRow, error: lookupError } = await supabase
+    // 1. Resolve phone number → organisation
+    const { data: phoneRowRaw, error: lookupError } = await supabase
       .from("phone_numbers")
       .select(
-        "id, organisation_id, user_id, assistant_id, vapi_assistant_id, vapi_phone_number_id, phone_number"
+        "id, organisation_id, user_id, assistant_id, elevenlabs_agent_id, phone_number"
       )
       .eq("phone_number", clinicNumber)
       .eq("is_active", true)
       .maybeSingle();
 
-    if (lookupError || !phoneRow) {
-      console.error(
-        "[Twilio] No active phone number for clinic number:",
-        clinicNumber,
-        lookupError
-      );
-      return twimlResponse(
-        "Sorry, this number is not registered. Goodbye."
-      );
+    if (lookupError || !phoneRowRaw) {
+      console.error("[Twilio] No active phone number for:", clinicNumber, lookupError);
+      return twimlSay("Sorry, this number is not registered. Goodbye.");
     }
+
+    const phoneRow = phoneRowRaw as {
+      id: string;
+      organisation_id: string | null;
+      user_id: string | null;
+      assistant_id: string | null;
+      elevenlabs_agent_id: string | null;
+      phone_number: string;
+    };
 
     const organisationId = phoneRow.organisation_id ?? null;
     const phoneNumberId = phoneRow.id;
-    const vapiPhoneNumberId =
-      phoneRow.vapi_phone_number_id ?? phoneRow.vapi_phone_number_id;
 
     if (!organisationId) {
       console.error("[Twilio] Phone number has no organisation_id:", phoneRow.id);
-      return twimlResponse(
-        "Sorry, this number is not configured. Goodbye."
-      );
+      return twimlSay("Sorry, this number is not configured. Goodbye.");
     }
 
+    // 2. Load organisation details
     const { data: org } = await supabase
       .from("organisations")
-      .select("id, selected_voice_agent_id")
+      .select("id, name, selected_voice_agent_id, elevenlabs_agent_id")
       .eq("id", organisationId)
       .single();
 
-    const voiceAgentId = org?.selected_voice_agent_id ?? null;
+    const orgName = (org as { name?: string } | null)?.name ?? "our team";
+    const voiceAgentId =
+      (org as { selected_voice_agent_id?: string } | null)?.selected_voice_agent_id ?? null;
+    const orgElevenLabsAgentId =
+      phoneRow.elevenlabs_agent_id ??
+      (org as { elevenlabs_agent_id?: string } | null)?.elevenlabs_agent_id ??
+      null;
 
+    // 3. Load intents for this organisation
     const { data: intents } = await supabase
       .from("intents")
       .select("intent_name, example_user_phrases, english_responses, russian_responses")
       .eq("organisation_id", organisationId)
       .order("created_at", { ascending: true });
 
-    // Fetch the assistant from VAPI so the voice matches (predefined or custom-created)
-    let fetchedVoiceConfig = null;
-    if (voiceAgentId) {
-      fetchedVoiceConfig = await fetchVapiAssistantVoiceConfig(voiceAgentId);
+    // 4. Resolve ElevenLabs agent ID and API key
+    let elevenLabsAgentId: string;
+    try {
+      elevenLabsAgentId = resolveElevenLabsAgentId(orgElevenLabsAgentId);
+    } catch (err) {
+      console.error("[Twilio] ElevenLabs agent ID not configured:", err);
+      return twimlSay("Service temporarily unavailable. Please try again later.");
     }
 
-    // Always use a transient assistant with org intents; voice from VAPI so it sounds like the selected agent
-    const assistantConfig = buildTransientAssistant(
+    const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+    if (!elevenLabsApiKey) {
+      console.error("[Twilio] ELEVENLABS_API_KEY not set");
+      return twimlSay("Service temporarily unavailable. Please try again later.");
+    }
+
+    // 5. Build dynamic conversation config (voice + org intents)
+    const conversationInitData = buildConversationInitData(
       voiceAgentId,
+      orgName,
       (intents ?? []) as {
         intent_name: string;
         example_user_phrases: string[];
         english_responses: string[];
         russian_responses: string[];
       }[],
-      fetchedVoiceConfig ?? undefined
+      callerNumber,
+      organisationId
     );
 
-    const vapiApiKey = process.env.VAPI_API_KEY;
-    if (!vapiApiKey) {
-      console.error("[Twilio] VAPI_API_KEY not set");
-      return twimlResponse(
-        "Service temporarily unavailable. Please try again later."
-      );
+    // 6. Register the call with ElevenLabs → get TwiML back
+    const client = new ElevenLabsClient({ apiKey: elevenLabsApiKey });
+
+    let twiml: string;
+    try {
+      twiml = await client.conversationalAi.twilio.registerCall({
+        agentId: elevenLabsAgentId,
+        fromNumber: callerNumber,
+        toNumber: clinicNumber,
+        direction: "inbound",
+        conversationInitiationClientData: conversationInitData,
+      });
+    } catch (err) {
+      console.error("[Twilio] ElevenLabs registerCall failed:", err);
+      return twimlSay("We could not connect your call. Please try again later.");
     }
 
-    const payload = {
-      type: "inboundPhoneCall",
-      assistant: assistantConfig,
-      customer: { number: callerNumber },
-      phoneNumberId: vapiPhoneNumberId || undefined,
-      metadata: {
+    // 7. Insert initial call record in our DB (updated when ElevenLabs sends post-call webhook)
+    const { data: insertedCall } = await supabase
+      .from("calls")
+      .insert({
         organisation_id: organisationId,
+        user_id: phoneRow.user_id ?? null,
         phone_number_id: phoneNumberId,
+        assistant_id: phoneRow.assistant_id ?? null,
         caller_phone_number: callerNumber,
         assistant_phone_number: clinicNumber,
-        twilio_call_sid: body.CallSid,
-      },
-    };
+        call_status: "initiated",
+        started_at: new Date().toISOString(),
+        metadata: {
+          twilio_call_sid: body.CallSid,
+          elevenlabs_agent_id: elevenLabsAgentId,
+          voice_agent_id: voiceAgentId,
+        },
+      } as never)
+      .select("id")
+      .single();
 
-    const vapiResponse = await vapiPost("/v1/call", vapiApiKey, payload);
-
-    if (!vapiResponse?.id) {
-      console.error("[Twilio] Vapi create call failed:", vapiResponse);
-      return twimlResponse(
-        "We could not connect your call. Please try again later."
-      );
-    }
-
-    await supabase.from("calls").insert({
-      organisation_id: organisationId,
-      user_id: phoneRow.user_id ?? null,
-      phone_number_id: phoneNumberId,
-      assistant_id: phoneRow.assistant_id ?? null,
-      vapi_call_id: vapiResponse.id,
-      caller_phone_number: callerNumber,
-      assistant_phone_number: clinicNumber,
-      call_status: "initiated",
-      started_at: new Date().toISOString(),
-      metadata: { twilio_call_sid: body.CallSid, vapi_response: vapiResponse },
-    });
-
-    return twimlResponse("Connecting you now.");
-  } catch (err: unknown) {
-    console.error("[Twilio] Error:", err);
-    return twimlResponse(
-      "An error occurred. Please try again later."
+    console.log(
+      `[Twilio] Call initiated. DB id=${(insertedCall as { id?: string } | null)?.id ?? "unknown"} ` +
+        `org=${organisationId} agent=${elevenLabsAgentId}`
     );
+
+    // 8. Return the TwiML ElevenLabs provided — Twilio streams audio directly to ElevenLabs
+    return new NextResponse(twiml, {
+      status: 200,
+      headers: { "Content-Type": "text/xml" },
+    });
+  } catch (err: unknown) {
+    console.error("[Twilio] Unhandled error:", err);
+    return twimlSay("An error occurred. Please try again later.");
   }
 }
 
-function twimlResponse(say: string) {
-  return new NextResponse(
-    `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">${say}</Say>
-  <Hangup/>
-</Response>`,
-    {
-      status: 200,
-      headers: { "Content-Type": "text/xml" },
-    }
-  );
-}
-
-function vapiPost(
-  path: string,
-  apiKey: string,
-  body: object
-): Promise<{ id?: string; [k: string]: unknown }> {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(body);
-    const req = https.request(
-      {
-        hostname: "api.vapi.ai",
-        port: 443,
-        path,
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(data),
-        },
-      },
-      (res) => {
-        let buf = "";
-        res.on("data", (ch) => (buf += ch));
-        res.on("end", () => {
-          try {
-            const json = JSON.parse(buf);
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              resolve(json);
-            } else {
-              reject(new Error(json.message || `Vapi ${res.statusCode}`));
-            }
-          } catch {
-            reject(new Error("Invalid Vapi response"));
-          }
-        });
-      }
-    );
-    req.on("error", reject);
-    req.write(data);
-    req.end();
-  });
-}
-
+/** Twilio status callback (GET or POST) — update call status in DB. */
 export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
   const callStatus = searchParams.get("CallStatus");
   const callSid = searchParams.get("CallSid");
 
-  console.log("[Twilio Status] Call", callSid, "status:", callStatus);
+  console.log("[Twilio Status] CallSid:", callSid, "Status:", callStatus);
 
-  if (callSid) {
+  if (callSid && callStatus) {
     const supabase = getSupabaseService();
     await supabase
       .from("calls")
-      .update({
-        call_status: callStatus || "unknown",
-        updated_at: new Date().toISOString(),
-      })
+      .update({ call_status: callStatus, updated_at: new Date().toISOString() } as never)
       .eq("metadata->>twilio_call_sid", callSid);
   }
 

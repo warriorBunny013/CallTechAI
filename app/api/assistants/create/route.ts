@@ -1,15 +1,19 @@
 /**
- * Create a new assistant in VAPI for the current org.
- * Uses org name, assistant name, selected voice, and dashboard intents.
+ * Create a new ElevenLabs Conversational AI agent for the current org.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getSupabaseService } from "@/lib/supabase/service";
 import { getCurrentUserAndOrg } from "@/lib/org";
-import { setVapiPhoneNumberAssistant } from "@/lib/vapi-phone-number";
-import { buildAssistantSystemPrompt, buildAssistantFirstMessage } from "@/lib/assistant-system-prompt";
-
-const VAPI_BASE = "https://api.vapi.ai";
+import { createElevenLabsAgent } from "@/lib/elevenlabs-agent-manager";
+import { buildSystemPromptWithIntents } from "@/lib/elevenlabs-call";
+import {
+  getAssistantTemplateById,
+  resolveTemplatePrompt,
+  type AssistantTemplateId,
+} from "@/lib/assistant-templates";
+import type { IntentRow } from "@/lib/vapi-call";
+import { normalizeLanguageCodes } from "@/lib/voice-library";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,162 +23,157 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { name, voiceId, voiceProvider = "vapi" } = body;
+    const {
+      name,
+      voiceId,
+      templateId,
+      languages: languagesRaw = ["en"],
+      systemPrompt: customSystemPrompt,
+      firstMessage: customFirstMessage,
+    } = body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
-      return NextResponse.json(
-        { error: "Assistant name is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Assistant name is required" }, { status: 400 });
     }
 
     if (!voiceId || typeof voiceId !== "string") {
-      return NextResponse.json(
-        { error: "Voice selection is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Voice selection is required" }, { status: 400 });
     }
 
-    const vapiApiKey = process.env.VAPI_API_KEY;
-    if (!vapiApiKey || vapiApiKey === "your_vapi_api_key_here") {
-      return NextResponse.json(
-        { error: "VAPI API key not configured" },
-        { status: 500 }
-      );
+    if (!templateId || typeof templateId !== "string") {
+      return NextResponse.json({ error: "Template selection is required" }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const template = getAssistantTemplateById(templateId);
+    if (!template) {
+      return NextResponse.json({ error: "Invalid template" }, { status: 400 });
+    }
+
+    const supabase = getSupabaseService();
 
     const { data: org, error: orgError } = await supabase
       .from("organisations")
-      .select("id, name")
+      .select("id, name, elevenlabs_agent_id")
       .eq("id", userAndOrg.organisationId)
       .single();
 
     if (orgError || !org) {
-      return NextResponse.json(
-        { error: "Organisation not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Organisation not found" }, { status: 404 });
     }
 
+    const orgId = (org as { id: string }).id;
     const orgName = (org as { name?: string }).name ?? "Your Business";
+    const agentName = name.trim();
+    const languages = normalizeLanguageCodes(languagesRaw);
+    const primaryLanguage = languages[0];
 
     const { data: intents } = await supabase
       .from("intents")
       .select("intent_name, example_user_phrases, english_responses, russian_responses")
-      .eq("organisation_id", userAndOrg.organisationId)
+      .eq("organisation_id", orgId)
       .order("created_at", { ascending: true });
 
-    const intentRows = (intents ?? []).map((r) => ({
-      intent_name: r.intent_name,
-      example_user_phrases: r.example_user_phrases ?? [],
-      english_responses: r.english_responses ?? [],
-      russian_responses: r.russian_responses ?? [],
-    }));
+    const intentRows = (intents ?? []) as IntentRow[];
 
-    const assistantName = name.trim();
-    const systemPrompt = buildAssistantSystemPrompt(assistantName, orgName, intentRows);
-    const firstMessage = buildAssistantFirstMessage(assistantName);
+    const resolved = resolveTemplatePrompt(template, orgName, agentName);
+    const basePrompt =
+      typeof customSystemPrompt === "string" && customSystemPrompt.trim()
+        ? customSystemPrompt.trim()
+            .replace(/\{\{org_name\}\}/g, orgName)
+            .replace(/\{\{agent_name\}\}/g, agentName)
+        : resolved.systemPrompt;
 
-    // Check if Google Calendar is already connected — if so, include stored tool IDs + inline tools
-    const { data: calConn } = await supabase
-      .from("organisation_calendar_connections")
-      .select("calendar_id, vapi_tool_ids")
-      .eq("organisation_id", userAndOrg.organisationId)
-      .maybeSingle();
+    const fullSystemPrompt = buildSystemPromptWithIntents(basePrompt, intentRows);
 
-    const calendarConnected = !!(calConn as { calendar_id?: string | null } | null)?.calendar_id;
-    const storedToolIds: string[] =
-      ((calConn as Record<string, unknown> | null)?.vapi_tool_ids as string[]) ?? [];
+    const firstMessage =
+      typeof customFirstMessage === "string" && customFirstMessage.trim()
+        ? customFirstMessage.trim()
+            .replace(/\{\{org_name\}\}/g, orgName)
+            .replace(/\{\{agent_name\}\}/g, agentName)
+        : resolved.firstMessage;
 
-    // Use toolIds only (no inline tools) — tool entities are created at calendar-connect time
-    void calendarConnected; // suppress unused warning
+    let existingCount = 0;
+    const { count, error: countError } = await supabase
+      .from("organisation_assistants")
+      .select("id", { count: "exact", head: true })
+      .eq("organisation_id", orgId);
 
-    const assistantPayload = {
-      name: assistantName,
+    if (!countError) {
+      existingCount = count ?? 0;
+    }
+
+    const legacyAgentId = (org as { elevenlabs_agent_id?: string | null }).elevenlabs_agent_id;
+    const isFirstAssistant = existingCount === 0 && !legacyAgentId;
+    const setAsOrgDefault = existingCount === 0;
+
+    const agentId = await createElevenLabsAgent({
+      name: agentName,
+      orgId,
+      orgName,
+      voiceId,
+      languages,
+      systemPrompt: fullSystemPrompt,
       firstMessage,
-      // Give enough silence headroom while tool calls (calendar, booking) are in-flight.
-      // VAPI default is 30 s — too short when Google Calendar API is being called.
-      silenceTimeoutSeconds: 60,
-      maxDurationSeconds: 3600,
-      model: {
-        provider: "openai",
-        model: "gpt-4o",
-        temperature: 0.7,
-        messages: [{ role: "system", content: systemPrompt }],
-        ...(storedToolIds.length > 0 ? { toolIds: storedToolIds } : {}),
-      },
-      voice: {
-        provider: voiceProvider,
-        voiceId,
-      },
-    };
-
-    const res = await fetch(`${VAPI_BASE}/assistant`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${vapiApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(assistantPayload),
+      hasCalendarTools: template.hasCalendarTools,
+      knowledgeBaseDocIds: [],
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      console.error("[assistants/create] VAPI create failed:", res.status, text);
-      return NextResponse.json(
-        { error: "Failed to create assistant in VAPI" },
-        { status: 500 }
-      );
-    }
-
-    const vapiAssistant = await res.json();
-    const assistantId = vapiAssistant?.id;
-
-    if (!assistantId) {
-      return NextResponse.json(
-        { error: "VAPI did not return assistant ID" },
-        { status: 500 }
-      );
-    }
-
-    const { error: updateError } = await supabase
-      .from("organisations")
-      .update({
-        selected_voice_agent_id: assistantId,
+    const { data: inserted, error: insertError } = await supabase
+      .from("organisation_assistants")
+      .insert({
+        organisation_id: orgId,
+        elevenlabs_agent_id: agentId,
+        name: agentName,
+        voice_id: voiceId,
+        template_id: templateId,
+        languages,
+        system_prompt: customSystemPrompt ?? basePrompt,
+        first_message: firstMessage,
+        is_default: setAsOrgDefault,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", userAndOrg.organisationId);
+      } as Record<string, unknown>)
+      .select("id")
+      .single();
 
-    if (updateError) {
-      console.error("[assistants/create] Org update failed:", updateError);
-      return NextResponse.json(
-        { error: "Failed to save assistant to organisation" },
-        { status: 500 }
-      );
+    if (insertError) {
+      console.warn("[assistants/create] organisation_assistants insert:", insertError);
     }
 
-    const { data: phones } = await supabase
-      .from("phone_numbers")
-      .select("vapi_phone_number_id")
-      .eq("organisation_id", userAndOrg.organisationId);
+    if (setAsOrgDefault) {
+      await supabase
+        .from("organisations")
+        .update({
+          elevenlabs_agent_id: agentId,
+          selected_voice_agent_id: voiceId,
+          updated_at: new Date().toISOString(),
+        } as Record<string, unknown>)
+        .eq("id", orgId);
 
-    for (const p of phones ?? []) {
-      const vid = (p as { vapi_phone_number_id?: string }).vapi_phone_number_id;
-      if (vid) {
-        await setVapiPhoneNumberAssistant(vid, assistantId, vapiApiKey);
-      }
+      await supabase.from("organisation_settings").upsert({
+        organisation_id: orgId,
+        agent_name: agentName,
+        agent_voice_id: voiceId,
+        agent_language: primaryLanguage,
+        agent_languages: languages,
+        agent_template_id: templateId as AssistantTemplateId,
+        agent_system_prompt: customSystemPrompt ?? basePrompt,
+        agent_first_message: firstMessage,
+        updated_at: new Date().toISOString(),
+      } as Record<string, unknown>);
     }
 
     return NextResponse.json({
       assistant: {
-        id: assistantId,
-        name: assistantName,
+        id: (inserted as { id?: string } | null)?.id ?? agentId,
+        elevenlabsAgentId: agentId,
+        name: agentName,
+        voiceId,
+        templateId,
+        languages,
         firstMessage,
-        voice: { provider: voiceProvider, voiceId },
+        isDefault: setAsOrgDefault,
       },
-      message: "Assistant created and linked to your phone numbers",
+      message: "Assistant created and ready to handle calls",
     });
   } catch (err) {
     console.error("[assistants/create] Error:", err);

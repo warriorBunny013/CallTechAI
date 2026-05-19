@@ -1,147 +1,117 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { getCurrentUserAndOrg } from '@/lib/org'
+/**
+ * POST /api/assistants/launch
+ *
+ * Links an ElevenLabs assistant (organisation_assistants row) to a phone number.
+ * After this, inbound calls on that Twilio number will be handled by the
+ * specified ElevenLabs agent instead of the org's default agent.
+ *
+ * Body: { phoneNumberId: string, assistantRowId: string }
+ */
 
-// POST: Launch assistant (link phone number to assistant for inbound calls)
+import { NextRequest, NextResponse } from "next/server";
+import { getSupabaseService } from "@/lib/supabase/service";
+import { getCurrentUserAndOrg } from "@/lib/org";
+
 export async function POST(request: NextRequest) {
   try {
-    const userAndOrg = await getCurrentUserAndOrg()
+    const userAndOrg = await getCurrentUserAndOrg();
     if (!userAndOrg) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const supabase = await createClient()
+    const body = await request.json();
+    const { phoneNumberId, assistantRowId, assistantId } = body as {
+      phoneNumberId?: string;
+      assistantRowId?: string;
+      // Legacy alias
+      assistantId?: string;
+    };
 
-    const body = await request.json()
-    const { phoneNumberId, assistantId } = body
+    const resolvedAssistantRowId = assistantRowId ?? assistantId;
 
-    if (!phoneNumberId || !assistantId) {
+    if (!phoneNumberId || !resolvedAssistantRowId) {
       return NextResponse.json(
-        { error: 'Phone number ID and assistant ID are required' },
+        { error: "phoneNumberId and assistantRowId are required" },
         { status: 400 }
-      )
+      );
     }
+
+    const supabase = getSupabaseService();
+    const orgId = userAndOrg.organisationId;
 
     // Verify phone number belongs to org
-    const { data: phoneNumber, error: phoneError } = await supabase
-      .from('phone_numbers')
-      .select('*')
-      .eq('id', phoneNumberId)
-      .eq('organisation_id', userAndOrg.organisationId)
-      .single()
+    const { data: phoneRow, error: phoneError } = await supabase
+      .from("phone_numbers")
+      .select("id, phone_number")
+      .eq("id", phoneNumberId)
+      .eq("organisation_id", orgId)
+      .single();
 
-    if (phoneError || !phoneNumber) {
-      return NextResponse.json(
-        { error: 'Phone number not found or unauthorized' },
-        { status: 404 }
-      )
+    if (phoneError || !phoneRow) {
+      return NextResponse.json({ error: "Phone number not found or unauthorized" }, { status: 404 });
     }
 
-    // Verify assistant belongs to org
-    const { data: assistant, error: assistantError } = await supabase
-      .from('assistants')
-      .select('*')
-      .eq('id', assistantId)
-      .eq('organisation_id', userAndOrg.organisationId)
-      .single()
+    // Resolve the ElevenLabs agent ID from the assistant row
+    const { data: assistantRow, error: assistantError } = await supabase
+      .from("organisation_assistants")
+      .select("id, elevenlabs_agent_id, name")
+      .eq("id", resolvedAssistantRowId)
+      .eq("organisation_id", orgId)
+      .maybeSingle();
 
-    if (assistantError || !assistant) {
-      return NextResponse.json(
-        { error: 'Assistant not found or unauthorized' },
-        { status: 404 }
-      )
-    }
+    // If not found by row ID, try looking up as ElevenLabs agent ID
+    let agentId: string | null = null;
+    let agentName = "AI Assistant";
+    let rowId = resolvedAssistantRowId;
 
-    // Update phone number in VAPI with assistant ID
-    const vapiApiKey = process.env.VAPI_API_KEY
-    if (!vapiApiKey || vapiApiKey === 'your_vapi_api_key_here') {
-      return NextResponse.json(
-        { error: 'VAPI API key not configured' },
-        { status: 500 }
-      )
-    }
+    if (!assistantError && assistantRow) {
+      agentId = (assistantRow as { elevenlabs_agent_id: string }).elevenlabs_agent_id;
+      agentName = (assistantRow as { name: string }).name;
+    } else {
+      // Try by elevenlabs_agent_id
+      const { data: byAgentId } = await supabase
+        .from("organisation_assistants")
+        .select("id, elevenlabs_agent_id, name")
+        .eq("organisation_id", orgId)
+        .eq("elevenlabs_agent_id", resolvedAssistantRowId)
+        .maybeSingle();
 
-    try {
-      const https = require('https')
-      const options = {
-        hostname: 'api.vapi.ai',
-        port: 443,
-        path: `/v1/phone-numbers/${phoneNumber.vapi_phone_number_id}`,
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${vapiApiKey}`,
-          'Content-Type': 'application/json'
-        }
+      if (byAgentId) {
+        agentId = (byAgentId as { elevenlabs_agent_id: string }).elevenlabs_agent_id;
+        agentName = (byAgentId as { name: string }).name;
+        rowId = (byAgentId as { id: string }).id;
       }
-
-      await new Promise((resolve, reject) => {
-        const req = https.request(options, (res: any) => {
-          let data = ''
-          res.on('data', (chunk: any) => data += chunk)
-          res.on('end', () => {
-            try {
-              if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-                resolve(JSON.parse(data))
-              } else {
-                const errorData = JSON.parse(data)
-                reject(new Error(errorData.message || 'Failed to update phone number in VAPI'))
-              }
-            } catch (parseError) {
-              reject(new Error('Failed to parse response'))
-            }
-          })
-        })
-        
-        req.on('error', reject)
-        req.write(JSON.stringify({
-          assistantId: assistant.vapi_assistant_id
-        }))
-        req.end()
-      })
-    } catch (vapiError: any) {
-      console.error('VAPI update error:', vapiError)
-      return NextResponse.json(
-        { error: vapiError.message || 'Failed to launch assistant in VAPI' },
-        { status: 500 }
-      )
     }
 
-    // Update in database
+    if (!agentId) {
+      return NextResponse.json({ error: "Assistant not found" }, { status: 404 });
+    }
+
+    // Link the phone number to this specific ElevenLabs agent
     const { data: updatedPhone, error: updateError } = await supabase
-      .from('phone_numbers')
+      .from("phone_numbers")
       .update({
-        assistant_id: assistantId,
-        vapi_assistant_id: assistant.vapi_assistant_id,
-        is_active: true
-      })
-      .eq('id', phoneNumberId)
-      .eq('organisation_id', userAndOrg.organisationId)
+        assistant_id: rowId,
+        elevenlabs_agent_id: agentId,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      } as Record<string, unknown>)
+      .eq("id", phoneNumberId)
+      .eq("organisation_id", orgId)
       .select()
-      .single()
+      .single();
 
     if (updateError) {
-      console.error('Database update error:', updateError)
-      return NextResponse.json(
-        { error: 'Failed to update phone number in database' },
-        { status: 500 }
-      )
+      console.error("[assistants/launch] DB update error:", updateError);
+      return NextResponse.json({ error: "Failed to link assistant to phone number" }, { status: 500 });
     }
 
     return NextResponse.json({
-      message: 'Assistant launched successfully! Your phone number is now active and ready to receive calls.',
+      message: `Assistant "${agentName}" is now handling calls on ${(phoneRow as { phone_number: string }).phone_number}.`,
       phoneNumber: updatedPhone,
-      assistant: assistant
-    })
-
+    });
   } catch (error) {
-    console.error('API error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    console.error("[assistants/launch] Error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
-

@@ -22,9 +22,23 @@ import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
 import {
   Plus, Trash2, Edit, MessageSquare, Loader2, Check, Clock, DollarSign, MapPin,
-  Calendar, Building2, AlertTriangle, Sparkles,
+  Calendar, Building2, AlertTriangle, Globe, Upload,
 } from "lucide-react"
 import { Intent } from "@/lib/supabase"
+import { IntentKnowledgePanel } from "@/components/dashboard/intent-knowledge-panel"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+type DashboardAssistant = {
+  id: string
+  name: string
+  isDefault: boolean
+}
 
 const MIN_EXAMPLES_RECOMMENDED = 3
 
@@ -113,6 +127,9 @@ export default function IntentsPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [addingTemplateIds, setAddingTemplateIds] = useState<Set<string>>(new Set())
   const [isAddingAll, setIsAddingAll] = useState(false)
+  const [assistants, setAssistants] = useState<DashboardAssistant[]>([])
+  const [selectedAssistantId, setSelectedAssistantId] = useState<string | null>(null)
+  const [assistantsLoading, setAssistantsLoading] = useState(true)
 
   const addedIntentNames = new Set(intents.map((i) => i.intent_name))
   const templatesToShow = CLINIC_INTENT_TEMPLATES.filter(
@@ -122,7 +139,33 @@ export default function IntentsPage() {
 
   useEffect(() => {
     fetchIntents()
+    fetchAssistants()
   }, [])
+
+  const fetchAssistants = async () => {
+    try {
+      setAssistantsLoading(true)
+      const res = await fetch("/api/assistants/list")
+      if (!res.ok) throw new Error("Failed to load assistants")
+      const data = await res.json()
+      const list: DashboardAssistant[] = (data.assistants ?? []).map(
+        (a: { id: string; name: string; isDefault?: boolean }) => ({
+          id: a.id,
+          name: a.name,
+          isDefault: Boolean(a.isDefault),
+        })
+      )
+      setAssistants(list)
+      const defaultOne = list.find((a) => a.isDefault) ?? list[0]
+      setSelectedAssistantId(defaultOne?.id ?? null)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setAssistantsLoading(false)
+    }
+  }
+
+  const selectedAssistant = assistants.find((a) => a.id === selectedAssistantId)
 
   const fetchIntents = async () => {
     try {
@@ -320,7 +363,7 @@ export default function IntentsPage() {
                 Intent Manager
               </h1>
               <p className="text-base md:text-lg text-gray-600 dark:text-gray-400 max-w-2xl">
-                Create and manage conversation intents for your AI assistant
+                Custom intents (all assistants) and per-assistant websites and files synced to ElevenLabs
               </p>
               <div className="flex items-center gap-2 pt-1">
                 <Badge className="bg-[#84CC16]/10 text-[#84CC16] border border-[#84CC16]/20 font-semibold">
@@ -328,14 +371,63 @@ export default function IntentsPage() {
                 </Badge>
               </div>
             </div>
-            <Button
-              onClick={handleNewIntent}
-              className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-semibold h-11 px-6 rounded-xl shadow-lg shadow-[#84CC16]/25 hover:shadow-[#84CC16]/40 transition-all self-start"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Add Intent
-            </Button>
           </div>
+
+          {(assistants.length > 0 || assistantsLoading) && (
+            <div className="p-4 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 flex flex-col sm:flex-row sm:items-center gap-3 max-w-2xl">
+              <Label className="font-semibold shrink-0">Knowledge for assistant</Label>
+              {assistantsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#84CC16]" />
+                  Loading assistants...
+                </div>
+              ) : (
+                <Select
+                  value={selectedAssistantId ?? undefined}
+                  onValueChange={setSelectedAssistantId}
+                >
+                  <SelectTrigger className="rounded-xl max-w-md">
+                    <SelectValue placeholder="Select assistant" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {assistants.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                        {a.isDefault ? " (default)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          )}
+
+          <Tabs defaultValue="intents" className="w-full">
+            <TabsList className="grid w-full max-w-2xl grid-cols-3 rounded-xl bg-gray-100 dark:bg-white/5 p-1 mb-6">
+              <TabsTrigger value="intents" className="rounded-lg font-semibold gap-2">
+                <MessageSquare className="h-4 w-4" />
+                Custom intents
+              </TabsTrigger>
+              <TabsTrigger value="website" className="rounded-lg font-semibold gap-2">
+                <Globe className="h-4 w-4" />
+                Add website
+              </TabsTrigger>
+              <TabsTrigger value="files" className="rounded-lg font-semibold gap-2">
+                <Upload className="h-4 w-4" />
+                Upload files
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="intents" className="space-y-6 mt-0">
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleNewIntent}
+                  className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-semibold h-11 px-6 rounded-xl shadow-lg shadow-[#84CC16]/25 hover:shadow-[#84CC16]/40 transition-all"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add custom intent
+                </Button>
+              </div>
 
           {/* Suggested intents */}
           <div className="p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10">
@@ -507,6 +599,24 @@ export default function IntentsPage() {
               </Accordion>
             )}
           </div>
+            </TabsContent>
+
+            <TabsContent value="website" className="mt-0">
+              <IntentKnowledgePanel
+                mode="website"
+                assistantId={selectedAssistantId}
+                assistantName={selectedAssistant?.name}
+              />
+            </TabsContent>
+
+            <TabsContent value="files" className="mt-0">
+              <IntentKnowledgePanel
+                mode="files"
+                assistantId={selectedAssistantId}
+                assistantName={selectedAssistant?.name}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
 

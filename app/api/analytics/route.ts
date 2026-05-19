@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentUserAndOrg } from '@/lib/org'
-import { fetchVapiCallsForPhoneNumber, type VapiCall } from '@/lib/vapi-fetch-calls'
 
 function formatDateLabel(dateStr: string): string {
   const date = new Date(dateStr)
@@ -30,17 +29,8 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createClient()
     const orgId = userAndOrg.organisationId
-    const vapiApiKey = process.env.VAPI_API_KEY
 
-    // Fetch phone numbers for this org
-    const { data: orgPhones } = await supabase
-      .from('phone_numbers')
-      .select('phone_number, vapi_phone_number_id')
-      .eq('organisation_id', orgId)
-
-    const phoneRows = (orgPhones ?? []) as { phone_number: string; vapi_phone_number_id?: string }[]
-
-    // Fetch calls from Vapi for each phone number
+    // Fetch calls from Supabase (ElevenLabs post-call webhook populates all data)
     type CallEntry = {
       id: string
       startedAt: string
@@ -50,61 +40,23 @@ export async function GET(request: NextRequest) {
       phoneNumber: string
       analysis: unknown
     }
-    const vapiCalls: CallEntry[] = []
 
-    if (vapiApiKey && vapiApiKey !== 'your_vapi_api_key_here' && phoneRows.length > 0) {
-      for (const row of phoneRows) {
-        const vapiId = row.vapi_phone_number_id
-        if (!vapiId) continue
-        const calls = await fetchVapiCallsForPhoneNumber(vapiId, 500, vapiApiKey)
-        for (const c of calls) {
-          const createdAtRaw = c.endedAt ?? c.startedAt ?? c.createdAt ?? ''
-          if (!createdAtRaw) continue
-          const callDate = new Date(createdAtRaw)
-          if (callDate < startDate || callDate > now) continue
+    const { data: dbCalls } = await supabase
+      .from('calls')
+      .select('id, call_status, duration_seconds, started_at, ended_at, created_at, analysis, summary, assistant_phone_number')
+      .eq('organisation_id', orgId)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', now.toISOString())
 
-          let durationSeconds = 0
-          if (c.endedAt && c.startedAt) {
-            durationSeconds = Math.max(0, Math.floor(
-              (new Date(c.endedAt).getTime() - new Date(c.startedAt).getTime()) / 1000
-            ))
-          } else if ((c as { duration?: number }).duration) {
-            durationSeconds = Math.floor(Number((c as { duration?: number }).duration) / 1000)
-          }
-
-          vapiCalls.push({
-            id: c.id,
-            startedAt: createdAtRaw,
-            endedAt: c.endedAt ?? null,
-            durationSeconds,
-            status: c.status === 'ended' || c.status === 'completed' ? 'pass' : 'fail',
-            phoneNumber: row.phone_number,
-            analysis: c.analysis ?? c.summary ?? null,
-          })
-        }
-      }
-    }
-
-    // Fallback: fetch from Supabase if no Vapi calls
-    let allCalls = vapiCalls
-    if (allCalls.length === 0) {
-      const { data: dbCalls } = await supabase
-        .from('calls')
-        .select('id, call_status, duration_seconds, started_at, created_at, analysis, assistant_phone_number')
-        .eq('organisation_id', orgId)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', now.toISOString())
-
-      allCalls = (dbCalls ?? []).map((row: Record<string, unknown>) => ({
-        id: String(row.id),
-        startedAt: String(row.started_at ?? row.created_at ?? ''),
-        endedAt: null,
-        durationSeconds: Number(row.duration_seconds) || 0,
-        status: row.call_status === 'completed' || row.call_status === 'success' ? 'pass' : 'fail',
-        phoneNumber: String(row.assistant_phone_number ?? ''),
-        analysis: row.analysis ?? null,
-      }))
-    }
+    const allCalls: CallEntry[] = (dbCalls ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id),
+      startedAt: String(row.started_at ?? row.created_at ?? ''),
+      endedAt: (row.ended_at as string | null) ?? null,
+      durationSeconds: Number(row.duration_seconds) || 0,
+      status: row.call_status === 'completed' || row.call_status === 'done' || row.call_status === 'success' ? 'pass' : 'fail',
+      phoneNumber: String(row.assistant_phone_number ?? ''),
+      analysis: row.analysis ?? row.summary ?? null,
+    }))
 
     const totalCalls = allCalls.length
     const totalMinutes = allCalls.reduce((sum, c) => sum + c.durationSeconds / 60, 0)
