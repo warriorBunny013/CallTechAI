@@ -67,12 +67,18 @@ If no intent matches, politely ask for clarification or offer to help with somet
  * /api/assistants/create). It injects per-call dynamic variables and
  * re-injects any intents that may have changed since the agent was created.
  *
- * @param voiceAgentId - organisations.selected_voice_agent_id (voice ID like "pNInz6obpgDQGcFmaJgB")
+ * @param voiceAgentId - organisations.selected_voice_agent_id (voice template ID like "taylor").
+ *                       Pass null to skip TTS/voice overrides and use the agent's native voice.
  * @param orgName      - Human-readable organisation name
  * @param intents      - Org intents from the `intents` table
  * @param callerNumber - Caller's phone number (E.164) for dynamic variables
  * @param orgId        - Organisation UUID — CRITICAL: injected into system prompt so
  *                       the LLM passes it in all tool calls (check-availability, book-appointment)
+ *
+ * NOTE: TTS/voice overrides are ONLY sent when voiceAgentId is non-null.
+ * Sending TTS overrides when the agent's "override" permissions are not enabled in
+ * ElevenLabs causes a WebSocket close (Twilio error 31921). When voiceAgentId is null
+ * we rely on the agent's own ElevenLabs-configured voice.
  */
 export function buildConversationInitData(
   voiceAgentId: string | null,
@@ -81,38 +87,63 @@ export function buildConversationInitData(
   callerNumber: string,
   orgId: string
 ): ConversationInitiationClientDataRequestInput {
-  const template: ElevenLabsAgentTemplate =
-    (voiceAgentId ? getElevenLabsAgentById(voiceAgentId) : undefined) ??
-    getDefaultElevenLabsAgent();
+  // Only resolve a template (and apply TTS overrides) when the org has explicitly
+  // selected a voice template. Otherwise let the agent use its native ElevenLabs config.
+  const template: ElevenLabsAgentTemplate | null = voiceAgentId
+    ? (getElevenLabsAgentById(voiceAgentId) ?? null)
+    : null;
 
-  // Resolve {{org_name}} in the base prompt and first message
-  const resolvedPrompt = template.systemPrompt.replace(/\{\{org_name\}\}/g, orgName);
-  const resolvedFirstMessage = template.firstMessage.replace(/\{\{org_name\}\}/g, orgName);
-
-  // Inject intents + org_id tool-call instruction into prompt override
-  const baseWithIntents = buildSystemPromptWithIntents(resolvedPrompt, intents);
-  const fullSystemPrompt =
-    baseWithIntents +
+  // org_id injection — always appended so tool calls (calendar, etc.) work
+  const orgIdInstruction =
     `\n\n## Tool Calls\nYour organisation ID is "${orgId}". ` +
     `Always include "org_id": "${orgId}" in every tool call you make.`;
+
+  if (template) {
+    // Full override: custom voice template + intents injected into prompt
+    const resolvedPrompt = template.systemPrompt.replace(/\{\{org_name\}\}/g, orgName);
+    const resolvedFirstMessage = template.firstMessage.replace(/\{\{org_name\}\}/g, orgName);
+    const baseWithIntents = buildSystemPromptWithIntents(resolvedPrompt, intents);
+    const fullSystemPrompt = baseWithIntents + orgIdInstruction;
+
+    return {
+      conversationConfigOverride: {
+        agent: {
+          prompt: { prompt: fullSystemPrompt },
+          firstMessage: resolvedFirstMessage,
+        },
+        tts: {
+          voiceId: template.voiceId,
+          stability: template.stability,
+          similarityBoost: template.similarityBoost,
+        },
+      },
+      dynamicVariables: {
+        org_name: orgName,
+        org_id: orgId,
+        caller_number: callerNumber,
+        agent_name: template.name,
+      },
+    };
+  }
+
+  // Minimal override: only inject org_id instruction + intents into prompt.
+  // No TTS/voice override — preserves the agent's native ElevenLabs voice settings
+  // and avoids WebSocket drops caused by rejected override permissions.
+  const minimalPromptAddition =
+    intents.length > 0
+      ? buildSystemPromptWithIntents("", intents).trim() + orgIdInstruction
+      : orgIdInstruction.trim();
 
   return {
     conversationConfigOverride: {
       agent: {
-        prompt: { prompt: fullSystemPrompt },
-        firstMessage: resolvedFirstMessage,
-      },
-      tts: {
-        voiceId: template.voiceId,
-        stability: template.stability,
-        similarityBoost: template.similarityBoost,
+        prompt: { prompt: minimalPromptAddition },
       },
     },
     dynamicVariables: {
       org_name: orgName,
       org_id: orgId,
       caller_number: callerNumber,
-      agent_name: template.name,
     },
   };
 }
