@@ -46,6 +46,16 @@ interface ElevenLabsPostCallPayload {
       call_duration_secs?: number;
       cost?: number;
       termination_reason?: string;
+      /** Phone call metadata — present for Twilio / SIP calls */
+      phone_call?: {
+        type?: string;       // "twilio" | "sip_trunking"
+        agent_number?: string;    // the assistant's phone number
+        external_number?: string; // the caller's phone number
+        call_sid?: string;
+        stream_sid?: string;
+        direction?: string;
+        phone_number_id?: string;
+      };
       [key: string]: unknown;
     };
     analysis?: {
@@ -135,12 +145,39 @@ export async function POST(req: NextRequest) {
   const durationSeconds = data.call_duration_secs ?? data.metadata?.call_duration_secs ?? null;
   const status = data.status === "done" ? "completed" : (data.status ?? "completed");
 
-  // Extract org context injected as dynamic variables during call setup
+  // Extract org context — two sources:
+  //  1. dynamic_variables injected at call start (legacy registerCall flow)
+  //  2. agent_id lookup in organisation_assistants (native ElevenLabs phone integration)
   const dynamicVars = data.conversation_initiation_client_data?.dynamic_variables ?? {};
-  const orgId = (dynamicVars.org_id as string | undefined) ?? null;
-  const callerNumber = (dynamicVars.caller_number as string | undefined) ?? null;
+  let orgId = (dynamicVars.org_id as string | undefined) ?? null;
+
+  // Caller / assistant phone — prefer dynamic_vars, fall back to Twilio metadata
+  const phoneCallMeta = data.metadata?.phone_call;
+  const callerNumber =
+    (dynamicVars.caller_number as string | undefined) ??
+    phoneCallMeta?.external_number ??
+    null;
+  const assistantPhoneNumber =
+    (dynamicVars.assistant_phone as string | undefined) ??
+    phoneCallMeta?.agent_number ??
+    null;
 
   const supabase = getSupabaseService();
+
+  // If orgId is missing (native ElevenLabs flow), resolve it from the agent
+  if (!orgId && agentId) {
+    const { data: assistantRow } = await supabase
+      .from("organisation_assistants")
+      .select("organisation_id")
+      .eq("elevenlabs_agent_id", agentId)
+      .maybeSingle();
+    orgId = (assistantRow as { organisation_id?: string } | null)?.organisation_id ?? null;
+    if (orgId) {
+      console.log(`[ElevenLabs Webhook] Resolved orgId=${orgId} from agentId=${agentId}`);
+    } else {
+      console.warn(`[ElevenLabs Webhook] Could not resolve orgId for agentId=${agentId}`);
+    }
+  }
 
   // ── Persist / update call record ──────────────────────────────────────────
   // Try to find the existing call record inserted at call start (by twilio_call_sid match
@@ -172,6 +209,9 @@ export async function POST(req: NextRequest) {
           duration_seconds: durationSeconds ? Math.floor(Number(durationSeconds)) : null,
           ended_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          // Backfill phone numbers if not already set
+          ...(callerNumber ? { caller_phone_number: callerNumber } : {}),
+          ...(assistantPhoneNumber ? { assistant_phone_number: assistantPhoneNumber } : {}),
           metadata: {
             elevenlabs_conversation_id: conversationId,
             elevenlabs_agent_id: agentId,
@@ -185,20 +225,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // If no existing record was found (e.g. call started before this deployment), insert a new one
+  // If no existing record was found (e.g. native ElevenLabs call or new deployment), insert one
   if (!callDbId && orgId) {
+    const startedAt = data.metadata?.start_time_unix_secs
+      ? new Date(data.metadata.start_time_unix_secs * 1000).toISOString()
+      : new Date().toISOString();
+
     const { data: inserted } = await supabase
       .from("calls")
       .insert({
         organisation_id: orgId,
-        caller_phone_number: callerNumber ?? "unknown",
+        caller_phone_number: callerNumber ?? null,
+        assistant_phone_number: assistantPhoneNumber ?? null,
         call_status: status,
         transcript: transcriptText,
         summary,
         recording_url: recordingUrl,
         duration_seconds: durationSeconds ? Math.floor(Number(durationSeconds)) : null,
         ended_at: new Date().toISOString(),
-        started_at: new Date().toISOString(),
+        started_at: startedAt,
         metadata: {
           elevenlabs_conversation_id: conversationId,
           elevenlabs_agent_id: agentId,
