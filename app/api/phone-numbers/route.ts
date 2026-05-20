@@ -178,10 +178,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Failed to save phone number: ${dbError.message}` }, { status: 500 })
     }
 
+    // Auto-assign the org's default (or first) assistant so calls work immediately
+    let assistantLinked = false
+    try {
+      const { data: defaultAssistant } = await supabase
+        .from('organisation_assistants')
+        .select('id, elevenlabs_agent_id, name')
+        .eq('organisation_id', userAndOrg.organisationId)
+        .eq('is_active', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+
+      if (defaultAssistant?.elevenlabs_agent_id) {
+        await supabase
+          .from('phone_numbers')
+          .update({
+            assistant_id: (defaultAssistant as { id: string }).id,
+            elevenlabs_agent_id: (defaultAssistant as { elevenlabs_agent_id: string }).elevenlabs_agent_id,
+          } as Record<string, unknown>)
+          .eq('id', (savedPhoneNumber as { id: string }).id)
+        assistantLinked = true
+        console.log(
+          `[phone-numbers] Auto-linked assistant "${(defaultAssistant as { name: string }).name}" ` +
+          `(${(defaultAssistant as { elevenlabs_agent_id: string }).elevenlabs_agent_id}) to ${e164Number}`
+        )
+      }
+    } catch (e) {
+      console.warn('[phone-numbers] Could not auto-assign assistant (not critical):', e)
+    }
+
     return NextResponse.json(
       {
         phoneNumber: savedPhoneNumber,
         webhookConfigured: twilioConfigured,
+        assistantLinked,
         webhookUrl,
         message: twilioConfigured
           ? 'Phone number added and Twilio webhook configured.'

@@ -32,7 +32,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/use-toast"
 import { Toaster } from "@/components/ui/toaster"
-import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle, Bot } from "lucide-react"
+import { Plus, Phone, Trash2, Loader2, CheckCircle2, XCircle, Bot, AlertTriangle } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 
 interface PhoneNumber {
@@ -329,15 +329,15 @@ export default function PhoneNumbersPage() {
                     <div className="mb-5">
                       <p className="text-xs font-medium text-gray-500 dark:text-gray-500 mb-2">AI Assistant</p>
                       <div className="flex items-center gap-2 flex-wrap">
-                        {assistantName ? (
+                        {phone.elevenlabs_agent_id ? (
                           <Badge className="bg-[#84CC16]/10 text-[#84CC16] border border-[#84CC16]/20 font-semibold gap-1.5">
                             <Bot className="h-3 w-3" />
-                            {assistantName}
+                            {assistantName ?? "AI Assistant"}
                           </Badge>
                         ) : (
-                          <Badge className="bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 border-0 font-medium">
-                            <CheckCircle2 className="h-3 w-3 mr-1" />
-                            Org default
+                          <Badge className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 font-semibold gap-1.5">
+                            <AlertTriangle className="h-3 w-3" />
+                            No assistant assigned
                           </Badge>
                         )}
                         {assistants.length > 0 && (
@@ -347,10 +347,20 @@ export default function PhoneNumbersPage() {
                             onClick={() => openAssignDialog(phone)}
                             className="h-6 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 px-2"
                           >
-                            Change
+                            {phone.elevenlabs_agent_id ? "Change" : "Assign →"}
                           </Button>
                         )}
                       </div>
+                      {!phone.elevenlabs_agent_id && assistants.length > 0 && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
+                          Assign an assistant so inbound calls are handled by your AI.
+                        </p>
+                      )}
+                      {!phone.elevenlabs_agent_id && assistants.length === 0 && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-1.5">
+                          Create an assistant first, then assign it here.
+                        </p>
+                      )}
                     </div>
 
                     {/* Actions */}
