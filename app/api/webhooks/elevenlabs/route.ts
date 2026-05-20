@@ -5,7 +5,7 @@
  * We use it to:
  *  1. Persist the full call record (transcript, summary, recording URL, duration).
  *  2. Link any orphan appointment created during the call.
- *  3. Dispatch Telegram / WhatsApp booking alerts.
+ *  3. Dispatch Telegram alerts (call summary + booking if applicable).
  *
  * Webhook events we handle:
  *  - "post_call_transcription" — sent when call ends with full data
@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseService } from "@/lib/supabase/service";
-import { dispatchAlerts, buildBookingAlertMessage, type AlertConfig } from "@/lib/alerts";
+import { dispatchAlerts, buildBookingAlertMessage, buildCallAlertMessage, type AlertConfig } from "@/lib/alerts";
 
 // ── ElevenLabs webhook payload types ─────────────────────────────────────────
 
@@ -257,12 +257,50 @@ export async function POST(req: NextRequest) {
     console.log(`[ElevenLabs Webhook] Inserted new call record id=${callDbId}`);
   }
 
-  // ── Async: send booking + summary alert ───────────────────────────────────
+  // ── Async: send call + booking alerts ─────────────────────────────────────
   void (async () => {
     try {
       if (!orgId || !conversationId) return;
 
-      // Find a booking linked to this call
+      const { data: alertConfig } = await supabase
+        .from("organisation_alert_configs")
+        .select("*")
+        .eq("organisation_id", orgId)
+        .maybeSingle();
+
+      if (!alertConfig) return;
+
+      const { data: org } = await supabase
+        .from("organisations")
+        .select("name")
+        .eq("id", orgId)
+        .maybeSingle();
+
+      const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
+      const config = alertConfig as AlertConfig;
+
+      const callSuccessful =
+        data.status !== "error" &&
+        data.analysis?.call_successful !== "failure" &&
+        (data.analysis?.call_successful === "success" || data.status === "done");
+
+      // ── Call completed alert (immediate post-call) ────────────────────────
+      if (callSuccessful) {
+        const durationSecs = durationSeconds ? Math.floor(Number(durationSeconds)) : 0;
+        const callMsg = buildCallAlertMessage({
+          orgName,
+          callerPhone: callerNumber,
+          assistantPhone: assistantPhoneNumber,
+          durationSeconds: durationSecs,
+          summary,
+          conversationId,
+        });
+
+        await dispatchAlerts(config, "new_call", callMsg);
+        console.log(`[ElevenLabs Webhook] Call alert dispatched for org: ${orgId}`);
+      }
+
+      // ── Booking alert (if appointment was created during the call) ────────
       const bookingSelect =
         "id, customer_name, customer_email, customer_phone, summary, start_at, end_at, call_id, created_at";
 
@@ -275,6 +313,18 @@ export async function POST(req: NextRequest) {
             .eq("organisation_id", orgId)
             .maybeSingle()
         ).data ?? null;
+
+      if (!booking && callDbId) {
+        booking =
+          (
+            await supabase
+              .from("appointments")
+              .select(bookingSelect)
+              .eq("call_id", callDbId)
+              .eq("organisation_id", orgId)
+              .maybeSingle()
+          ).data ?? null;
+      }
 
       // Fall back: orphan appointment created within last 25 mins without call_id
       if (!booking) {
@@ -301,25 +351,9 @@ export async function POST(req: NextRequest) {
       }
 
       if (!booking) {
-        console.log(`[ElevenLabs Webhook] No booking for conversation ${conversationId} — skipping alert.`);
         return;
       }
 
-      const { data: alertConfig } = await supabase
-        .from("organisation_alert_configs")
-        .select("*")
-        .eq("organisation_id", orgId)
-        .maybeSingle();
-
-      if (!alertConfig) return;
-
-      const { data: org } = await supabase
-        .from("organisations")
-        .select("name")
-        .eq("id", orgId)
-        .maybeSingle();
-
-      const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
       const b = booking as {
         customer_name?: string;
         customer_email?: string;
@@ -362,8 +396,8 @@ export async function POST(req: NextRequest) {
         summary: summary ?? undefined,
       });
 
-      await dispatchAlerts(alertConfig as AlertConfig, "new_booking", alertMsg);
-      console.log(`[ElevenLabs Webhook] Alert dispatched for org: ${orgId}`);
+      await dispatchAlerts(config, "new_booking", alertMsg);
+      console.log(`[ElevenLabs Webhook] Booking alert dispatched for org: ${orgId}`);
     } catch (e) {
       console.error("[ElevenLabs Webhook] Alert dispatch error (non-fatal):", e);
     }

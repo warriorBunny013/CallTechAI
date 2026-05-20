@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, Suspense } from "react"
+import { useState, Suspense } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
@@ -12,7 +12,7 @@ import {
   Star, Loader2, CreditCard, CheckCircle2,
 } from "lucide-react"
 import { useSubscription } from "@/hooks/use-subscription"
-import { useCallLogs } from "@/hooks/use-call-logs"
+import { useUsage } from "@/hooks/use-usage"
 
 /* ─── Plan definitions ──────────────────────────────────────────────────── */
 const PLANS = [
@@ -31,7 +31,7 @@ const PLANS = [
       "1 AI receptionist number",
       "1 voice persona",
       "1 language (English)",
-      "WhatsApp or Telegram alerts",
+      "Telegram alerts",
       "Google Calendar sync",
       "Call recordings + AI summaries",
       "Analytics dashboard",
@@ -55,7 +55,7 @@ const PLANS = [
       "3 AI receptionist numbers",
       "3 voice personas",
       "English + Russian",
-      "WhatsApp + Telegram alerts",
+      "Telegram alerts",
       "Google Calendar sync",
       "Call recordings + AI summaries",
       "Advanced analytics + trends",
@@ -79,7 +79,7 @@ const PLANS = [
       "10 AI receptionist numbers",
       "10 voice personas",
       "All languages supported",
-      "WhatsApp + Telegram alerts",
+      "Telegram alerts",
       "Google Calendar sync",
       "Call recordings + AI summaries",
       "Full analytics suite",
@@ -202,7 +202,7 @@ function useCheckout() {
 /* ─── Main content ───────────────────────────────────────────────────────── */
 function PricingContent() {
   const { hasActiveSubscription, canAccess, subscription, trialEndsAt, loading: subLoading, refetch } = useSubscription()
-  const { calls, loading: callsLoading } = useCallLogs()
+  const { data: usage, loading: usageLoading } = useUsage()
   const { startCheckout, loading: checkoutLoading } = useCheckout()
   const searchParams = useSearchParams()
 
@@ -216,20 +216,8 @@ function PricingContent() {
   /* Detect successful Stripe payment return */
   const justPaid = searchParams.get("session_id") && !subLoading
 
-  /* ── Usage calculation ── */
-  const minutesUsed = useMemo(() => {
-    if (isTrial) {
-      /* Trial: all-time total */
-      return calls.reduce((sum, c) => sum + (c.durationSeconds ?? 0), 0) / 60
-    }
-    /* Paid: minutes since billing period start */
-    const periodStart = subscription?.current_period_start
-      ? new Date(subscription.current_period_start)
-      : new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-    return calls
-      .filter((c) => new Date(c.createdAt) >= periodStart)
-      .reduce((sum, c) => sum + (c.durationSeconds ?? 0), 0) / 60
-  }, [calls, isTrial, subscription])
+  /* Billable minutes from ElevenLabs + Supabase (excludes web/demo calls) */
+  const minutesUsed = usage?.minutesUsed ?? 0
 
   const isAtLimit = minutesUsed >= minutesAllowed
   const showUpgradePrompt = isAtLimit || isTrial
@@ -345,7 +333,7 @@ function PricingContent() {
                       </span>
                     )}
                   </div>
-                  {callsLoading ? (
+                  {usageLoading ? (
                     <div className="space-y-2 animate-pulse">
                       <div className="h-4 w-52 bg-gray-200 dark:bg-white/10 rounded" />
                       <div className="h-3 w-full bg-gray-200 dark:bg-white/10 rounded-full" />
