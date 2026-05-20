@@ -1,16 +1,12 @@
 /**
- * Alert / notification helpers for Telegram and WhatsApp (Twilio).
+ * Alert / notification helpers for Telegram.
  * Used after new calls and new bookings to notify the organisation admin.
  */
 
 export interface AlertConfig {
   telegram_enabled: boolean;
-  /** @deprecated Bot token is now managed centrally via TELEGRAM_BOT_TOKEN env var */
   telegram_bot_token?: string | null;
   telegram_chat_id: string | null;
-  whatsapp_enabled: boolean;
-  whatsapp_to_number: string | null;
-  whatsapp_from_number: string | null;
   alert_on_new_call: boolean;
   alert_on_new_booking: boolean;
 }
@@ -54,43 +50,6 @@ export async function sendTelegramAlert(
   }
 }
 
-// ── WhatsApp via Twilio ───────────────────────────────────────────────────────
-
-export async function sendWhatsAppAlert(
-  fromNumber: string,
-  toNumber: string,
-  body: string
-): Promise<{ ok: boolean; error?: string }> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-  if (!accountSid || !authToken) {
-    return { ok: false, error: "Twilio credentials not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN)" };
-  }
-
-  const from = fromNumber.startsWith("whatsapp:") ? fromNumber : `whatsapp:${fromNumber}`;
-  const to = toNumber.startsWith("whatsapp:") ? toNumber : `whatsapp:${toNumber}`;
-
-  try {
-    const res = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-        },
-        body: new URLSearchParams({ From: from, To: to, Body: body }).toString(),
-      }
-    );
-    const data = (await res.json()) as { sid?: string; message?: string; code?: number };
-    if (!data.sid) return { ok: false, error: data.message ?? "WhatsApp send failed" };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "WhatsApp request failed" };
-  }
-}
-
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 export async function dispatchAlerts(
@@ -101,35 +60,58 @@ export async function dispatchAlerts(
   if (event === "new_call" && !config.alert_on_new_call) return;
   if (event === "new_booking" && !config.alert_on_new_booking) return;
 
-  const results: Promise<{ ok: boolean; error?: string }>[] = [];
+  if (!config.telegram_enabled || !config.telegram_chat_id) return;
 
-  if (config.telegram_enabled && config.telegram_chat_id) {
-    results.push(sendTelegramAlert(null, config.telegram_chat_id, message));
+  const result = await sendTelegramAlert(null, config.telegram_chat_id, message);
+  if (!result.ok) {
+    console.error("[alerts] Telegram dispatch failed:", result.error);
   }
-
-  if (
-    config.whatsapp_enabled &&
-    config.whatsapp_to_number &&
-    config.whatsapp_from_number
-  ) {
-    results.push(
-      sendWhatsAppAlert(config.whatsapp_from_number, config.whatsapp_to_number, message)
-    );
-  }
-
-  if (results.length === 0) return;
-
-  const settled = await Promise.allSettled(results);
-  settled.forEach((r, i) => {
-    if (r.status === "rejected") {
-      console.error(`[alerts] dispatch[${i}] rejected:`, r.reason);
-    } else if (!r.value.ok) {
-      console.error(`[alerts] dispatch[${i}] failed:`, r.value.error);
-    }
-  });
 }
 
 // ── Message builders ──────────────────────────────────────────────────────────
+
+export function buildCallAlertMessage(opts: {
+  orgName: string;
+  callerPhone?: string | null;
+  assistantPhone?: string | null;
+  durationSeconds?: number;
+  summary?: string | null;
+  conversationId?: string;
+}): string {
+  const mins = opts.durationSeconds ? Math.floor(opts.durationSeconds / 60) : 0;
+  const secs = opts.durationSeconds ? opts.durationSeconds % 60 : 0;
+  const duration =
+    opts.durationSeconds && opts.durationSeconds > 0
+      ? mins > 0
+        ? `${mins}m ${String(secs).padStart(2, "0")}s`
+        : `${secs}s`
+      : "Unknown";
+
+  const lines = [
+    `📞 <b>New Call — ${escapeTelegramHtml(opts.orgName)}</b>`,
+    "",
+    `👤 <b>Caller:</b> ${escapeTelegramHtml(opts.callerPhone || "Unknown")}`,
+  ];
+
+  if (opts.assistantPhone) {
+    lines.push(`📱 <b>Your number:</b> ${escapeTelegramHtml(opts.assistantPhone)}`);
+  }
+
+  lines.push(`⏱ <b>Duration:</b> ${duration}`, `✅ <b>Status:</b> Completed`);
+
+  if (opts.summary?.trim()) {
+    const trimmed = opts.summary.trim().slice(0, 500);
+    lines.push("", `📝 <b>AI Summary:</b> ${escapeTelegramHtml(trimmed)}`);
+  }
+
+  lines.push("", `Handled by your AI assistant`);
+
+  return lines.join("\n");
+}
+
+function escapeTelegramHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 export function buildBookingAlertMessage(opts: {
   orgName: string;

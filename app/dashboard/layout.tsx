@@ -481,6 +481,7 @@ function DashboardLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                {/* Voice Demo — temporarily hidden
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/demo"}>
                     <Link href="/demo">
@@ -489,6 +490,7 @@ function DashboardLayoutContent({
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                */}
               </SidebarMenu>
             </SidebarContent>
             <SidebarFooter className="px-1 py-4">

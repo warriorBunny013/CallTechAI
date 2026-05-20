@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -70,6 +70,42 @@ export default function RecordingsPage() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(100)
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+
+  // Lazy-fetch conversation details from ElevenLabs for calls without Supabase data
+  const fetchAndOpenAnalysis = useCallback(async (call: CallLog) => {
+    setSelectedCall(call)
+    setIsAnalysisOpen(true)
+
+    // If we already have analysis text, no need to fetch
+    if (call.analysis && call.analysis !== "No analysis available") return
+    if (!call.conversationId) return
+
+    setDetailLoading(true)
+    setDetailError(null)
+    try {
+      const res = await fetch(`/api/elevenlabs/conversations/${call.conversationId}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const detail = await res.json()
+      // Patch the selected call with fetched detail so the dialog shows it
+      setSelectedCall((prev) =>
+        prev
+          ? {
+              ...prev,
+              analysis: detail.analysis || detail.summary || detail.transcript || "No analysis available",
+              transcript: detail.transcript ?? prev.transcript,
+              summary: detail.summary ?? prev.summary,
+            }
+          : prev
+      )
+    } catch (err) {
+      setDetailError("Could not load analysis from ElevenLabs.")
+      console.error("[recordings] Failed to fetch conversation detail:", err)
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [])
 
   const uniquePhoneNumbers = useMemo(() => {
     const set = new Set<string>()
@@ -101,7 +137,9 @@ export default function RecordingsPage() {
   const filteredCalls = useMemo(() => {
     return calls.filter((call) => {
       const searchLower = searchQuery.toLowerCase()
-      const phoneMatch = (call.phoneNumber || "").toLowerCase().includes(searchLower)
+      const phoneMatch =
+        (call.phoneNumber || "").toLowerCase().includes(searchLower) ||
+        (call.configuredPhoneNumber || "").toLowerCase().includes(searchLower)
       const analysisMatch = (call.analysis || "").toLowerCase().includes(searchLower)
       const matchesSearch = !searchQuery || phoneMatch || analysisMatch
       const matchesIntent = !intentSearch || (call.analysis || "").toLowerCase().includes(intentSearch.toLowerCase())
@@ -191,7 +229,7 @@ export default function RecordingsPage() {
                 <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
               </div>
               <p className="text-sm font-medium text-red-700 dark:text-red-300">
-                {error}. Please check your Vapi configuration and try again.
+                {error}. Please try refreshing. If the problem persists, check your ElevenLabs configuration.
               </p>
             </div>
           )}
@@ -380,10 +418,14 @@ export default function RecordingsPage() {
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-1.5">
                               <Phone className="h-3.5 w-3.5 text-[#84CC16] shrink-0" />
-                              <span className="font-mono text-sm text-gray-900 dark:text-white">{call.phoneNumber || (call.isWebCall ? "Web" : "—")}</span>
+                              <span className="font-mono text-sm text-gray-900 dark:text-white">
+                                {call.phoneNumber || (call.isWebCall ? "Web" : "Unknown caller")}
+                              </span>
                             </div>
-                            {call.configuredPhoneNumber && call.configuredPhoneNumber !== call.phoneNumber && (
-                              <span className="text-xs text-gray-500 dark:text-gray-500 pl-5">via {call.configuredPhoneNumber}</span>
+                            {call.configuredPhoneNumber && (
+                              <span className="text-xs text-gray-500 dark:text-gray-500 pl-5">
+                                via {call.configuredPhoneNumber}
+                              </span>
                             )}
                           </div>
                         </TableCell>
@@ -413,30 +455,34 @@ export default function RecordingsPage() {
                         </TableCell>
                         <TableCell>
                           <div className="max-w-xs">
-                            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">{call.analysis}</p>
-                            {call.analysis && call.analysis.length > 100 && (
+                            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+                              {call.analysis || <span className="text-gray-400 dark:text-gray-600 italic">—</span>}
+                            </p>
+                            {(call.analysis || call.conversationId) && (
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => { setSelectedCall(call); setIsAnalysisOpen(true) }}
+                                onClick={() => fetchAndOpenAnalysis(call)}
                                 className="text-xs text-[#84CC16] hover:text-[#65A30D] hover:bg-[#84CC16]/10 mt-0.5 h-auto px-0 py-0 font-semibold"
                               >
-                                View full analysis →
+                                {call.analysis ? "View full analysis →" : "Load analysis →"}
                               </Button>
                             )}
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handlePlayRecording(call)}
-                              className="h-8 w-8 rounded-lg hover:bg-[#84CC16]/10"
-                            >
-                              <Play className="h-4 w-4 text-[#84CC16]" />
-                            </Button>
-                            {call.recordingUrl && (
+                            {call.status !== "fail" && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handlePlayRecording(call)}
+                                className="h-8 w-8 rounded-lg hover:bg-[#84CC16]/10"
+                              >
+                                <Play className="h-4 w-4 text-[#84CC16]" />
+                              </Button>
+                            )}
+                            {call.status !== "fail" && call.recordingUrl && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -569,14 +615,14 @@ export default function RecordingsPage() {
       </Dialog>
 
       {/* Full analysis dialog */}
-      <Dialog open={isAnalysisOpen} onOpenChange={setIsAnalysisOpen}>
+      <Dialog open={isAnalysisOpen} onOpenChange={(open) => { setIsAnalysisOpen(open); if (!open) { setDetailLoading(false); setDetailError(null) } }}>
         <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl border-gray-200 dark:border-white/10">
           <DialogHeader>
             <DialogTitle className="text-xl font-bold">AI Call Analysis</DialogTitle>
           </DialogHeader>
           {selectedCall && (
             <div className="space-y-4">
-              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400 font-medium">
+              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400 font-medium flex-wrap">
                 <span>{formatDateLabel(selectedCall.date)} at {selectedCall.time}</span>
                 <span className="text-gray-300 dark:text-gray-600">·</span>
                 <span>{selectedCall.duration}</span>
@@ -584,10 +630,34 @@ export default function RecordingsPage() {
                 <StatusBadge status={selectedCall.status} />
               </div>
               <div className="border-t border-gray-100 dark:border-white/5 pt-4">
-                <div className="p-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-300">{selectedCall.analysis}</p>
-                </div>
+                {detailLoading ? (
+                  <div className="flex items-center gap-3 py-6 justify-center">
+                    <RefreshCw className="h-4 w-4 text-[#84CC16] animate-spin" />
+                    <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">Loading analysis from ElevenLabs…</span>
+                  </div>
+                ) : detailError ? (
+                  <div className="p-4 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40">
+                    <p className="text-sm text-red-700 dark:text-red-400">{detailError}</p>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5">
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 dark:text-gray-300">
+                      {selectedCall.analysis || "No analysis available for this call."}
+                    </p>
+                  </div>
+                )}
               </div>
+              {/* Transcript section (if available) */}
+              {selectedCall.transcript && !detailLoading && (
+                <div className="border-t border-gray-100 dark:border-white/5 pt-4 space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Transcript</h4>
+                  <div className="p-4 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/5 max-h-64 overflow-y-auto">
+                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-600 dark:text-gray-400 font-mono">
+                      {selectedCall.transcript}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>

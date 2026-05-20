@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Phone, MessageSquare, Clock, Play, Loader2, RefreshCw, ArrowUpRight, TrendingUp, Activity } from "lucide-react"
+import { Phone, MessageSquare, Clock, Play, Loader2, RefreshCw, ArrowUpRight, TrendingUp, Activity, Timer } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { useState, useEffect, Suspense } from "react"
@@ -30,15 +30,20 @@ function DashboardContent() {
   const [showWizard, setShowWizard] = useState(true)
 
   const totalCalls = calls.length
-  const callsWithDuration = calls.filter((c) => (c.durationSeconds ?? 0) > 0)
-  const totalSeconds = callsWithDuration.reduce((sum, c) => sum + (c.durationSeconds ?? 0), 0)
-  const avgDurationSeconds = callsWithDuration.length > 0 ? Math.floor(totalSeconds / callsWithDuration.length) : 0
+  const billableCalls = calls.filter((c) => !c.isWebCall && c.status !== "in_progress")
+  const callsWithDuration = billableCalls.filter((c) => (c.durationSeconds ?? 0) > 0)
+  const totalSeconds = billableCalls.reduce((sum, c) => sum + (c.durationSeconds ?? 0), 0)
+  const totalMinutes = Math.round((totalSeconds / 60) * 10) / 10
+  const avgDurationSeconds =
+    callsWithDuration.length > 0 ? Math.floor(totalSeconds / callsWithDuration.length) : 0
   const avgDuration = formatDuration(avgDurationSeconds)
   const recentCalls = calls.slice(0, 5)
 
-  // Calculate successful calls percentage
-  const successfulCalls = calls.filter(c => c.status === 'pass' || c.status === 'completed').length
-  const successRate = totalCalls > 0 ? Math.round((successfulCalls / totalCalls) * 100) : 0
+  const successfulCalls = billableCalls.filter(
+    (c) => c.status === "pass" || c.status === "completed"
+  ).length
+  const successRate =
+    billableCalls.length > 0 ? Math.round((successfulCalls / billableCalls.length) * 100) : 0
 
   const handleRefresh = () => {
     refetch()
@@ -109,7 +114,7 @@ function DashboardContent() {
           </div>
 
           {/* Stats Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
             {/* Total Calls */}
             <div className="group relative p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 hover:border-[#84CC16]/50 dark:hover:border-[#84CC16]/50 hover:shadow-lg hover:shadow-[#84CC16]/5 transition-all duration-300">
               <div className="flex items-start justify-between mb-4">
@@ -132,7 +137,35 @@ function DashboardContent() {
                     Total Calls
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    {error ? 'Error loading' : 'All time'}
+                    {error ? "Error loading" : `${billableCalls.length} phone calls`}
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Total Minutes */}
+            <div className="group relative p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 hover:border-[#84CC16]/50 dark:hover:border-[#84CC16]/50 hover:shadow-lg hover:shadow-[#84CC16]/5 transition-all duration-300">
+              <div className="flex items-start justify-between mb-4">
+                <div className="p-3 rounded-xl bg-amber-500/10 dark:bg-amber-500/10 group-hover:scale-110 transition-transform duration-300">
+                  <Timer className="h-5 w-5 text-amber-500" />
+                </div>
+                <TrendingUp className="h-4 w-4 text-gray-400 dark:text-gray-600" />
+              </div>
+              {callsLoading ? (
+                <div className="space-y-2">
+                  <div className="h-8 w-20 bg-gray-200 dark:bg-white/10 animate-pulse rounded"></div>
+                  <div className="h-3 w-24 bg-gray-200 dark:bg-white/10 animate-pulse rounded"></div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-1">
+                    {totalMinutes.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                  </div>
+                  <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                    Total Minutes
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                    Billable call time
                   </p>
                 </>
               )}
@@ -190,7 +223,7 @@ function DashboardContent() {
                     Success Rate
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                    {successfulCalls} of {totalCalls} calls
+                    {successfulCalls} of {billableCalls.length} calls
                   </p>
                 </>
               )}
@@ -237,7 +270,7 @@ function DashboardContent() {
                     Error loading dashboard data
                   </p>
                   <p className="text-sm text-red-700 dark:text-red-300">
-                    {error}. Please check your VAPI API key in settings and try refreshing.
+                    {error}. Please check your ElevenLabs configuration and try refreshing.
                   </p>
                 </div>
               </div>
@@ -387,7 +420,7 @@ function DashboardContent() {
                         </svg>
                       </div>
                       <p className="text-sm font-medium text-gray-900 dark:text-white">Error loading calls</p>
-                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">Check your VAPI API key</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">Check your ElevenLabs configuration</p>
                     </div>
                   ) : (
                     <div className="text-center py-12">

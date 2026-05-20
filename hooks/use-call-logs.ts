@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 
 export interface CallLog {
   id: string
+  conversationId: string | null
   phoneNumber: string
   configuredPhoneNumber: string
   isWebCall: boolean
@@ -12,8 +13,11 @@ export interface CallLog {
   status: string
   recordingUrl: string | null
   analysis: string
+  transcript: string | null
+  summary: string | null
   createdAt: string
   hasBooking?: boolean
+  hasDetail?: boolean
 }
 
 export function useCallLogs() {
@@ -26,7 +30,7 @@ export function useCallLogs() {
       setLoading(true)
       setError(null)
       
-      console.log('Fetching call logs from Vapi...')
+      console.log('Fetching call logs from ElevenLabs...')
       const response = await fetch('/api/call-logs')
       console.log('Response status:', response.status)
       console.log('Response headers:', Object.fromEntries(response.headers.entries()))

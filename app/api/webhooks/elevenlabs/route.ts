@@ -5,7 +5,7 @@
  * We use it to:
  *  1. Persist the full call record (transcript, summary, recording URL, duration).
  *  2. Link any orphan appointment created during the call.
- *  3. Dispatch Telegram / WhatsApp booking alerts.
+ *  3. Dispatch Telegram alerts (call summary + booking if applicable).
  *
  * Webhook events we handle:
  *  - "post_call_transcription" — sent when call ends with full data
@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { getSupabaseService } from "@/lib/supabase/service";
-import { dispatchAlerts, buildBookingAlertMessage, type AlertConfig } from "@/lib/alerts";
+import { dispatchAlerts, buildBookingAlertMessage, buildCallAlertMessage, type AlertConfig } from "@/lib/alerts";
 
 // ── ElevenLabs webhook payload types ─────────────────────────────────────────
 
@@ -46,6 +46,16 @@ interface ElevenLabsPostCallPayload {
       call_duration_secs?: number;
       cost?: number;
       termination_reason?: string;
+      /** Phone call metadata — present for Twilio / SIP calls */
+      phone_call?: {
+        type?: string;       // "twilio" | "sip_trunking"
+        agent_number?: string;    // the assistant's phone number
+        external_number?: string; // the caller's phone number
+        call_sid?: string;
+        stream_sid?: string;
+        direction?: string;
+        phone_number_id?: string;
+      };
       [key: string]: unknown;
     };
     analysis?: {
@@ -135,12 +145,39 @@ export async function POST(req: NextRequest) {
   const durationSeconds = data.call_duration_secs ?? data.metadata?.call_duration_secs ?? null;
   const status = data.status === "done" ? "completed" : (data.status ?? "completed");
 
-  // Extract org context injected as dynamic variables during call setup
+  // Extract org context — two sources:
+  //  1. dynamic_variables injected at call start (legacy registerCall flow)
+  //  2. agent_id lookup in organisation_assistants (native ElevenLabs phone integration)
   const dynamicVars = data.conversation_initiation_client_data?.dynamic_variables ?? {};
-  const orgId = (dynamicVars.org_id as string | undefined) ?? null;
-  const callerNumber = (dynamicVars.caller_number as string | undefined) ?? null;
+  let orgId = (dynamicVars.org_id as string | undefined) ?? null;
+
+  // Caller / assistant phone — prefer dynamic_vars, fall back to Twilio metadata
+  const phoneCallMeta = data.metadata?.phone_call;
+  const callerNumber =
+    (dynamicVars.caller_number as string | undefined) ??
+    phoneCallMeta?.external_number ??
+    null;
+  const assistantPhoneNumber =
+    (dynamicVars.assistant_phone as string | undefined) ??
+    phoneCallMeta?.agent_number ??
+    null;
 
   const supabase = getSupabaseService();
+
+  // If orgId is missing (native ElevenLabs flow), resolve it from the agent
+  if (!orgId && agentId) {
+    const { data: assistantRow } = await supabase
+      .from("organisation_assistants")
+      .select("organisation_id")
+      .eq("elevenlabs_agent_id", agentId)
+      .maybeSingle();
+    orgId = (assistantRow as { organisation_id?: string } | null)?.organisation_id ?? null;
+    if (orgId) {
+      console.log(`[ElevenLabs Webhook] Resolved orgId=${orgId} from agentId=${agentId}`);
+    } else {
+      console.warn(`[ElevenLabs Webhook] Could not resolve orgId for agentId=${agentId}`);
+    }
+  }
 
   // ── Persist / update call record ──────────────────────────────────────────
   // Try to find the existing call record inserted at call start (by twilio_call_sid match
@@ -172,6 +209,9 @@ export async function POST(req: NextRequest) {
           duration_seconds: durationSeconds ? Math.floor(Number(durationSeconds)) : null,
           ended_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          // Backfill phone numbers if not already set
+          ...(callerNumber ? { caller_phone_number: callerNumber } : {}),
+          ...(assistantPhoneNumber ? { assistant_phone_number: assistantPhoneNumber } : {}),
           metadata: {
             elevenlabs_conversation_id: conversationId,
             elevenlabs_agent_id: agentId,
@@ -185,20 +225,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // If no existing record was found (e.g. call started before this deployment), insert a new one
+  // If no existing record was found (e.g. native ElevenLabs call or new deployment), insert one
   if (!callDbId && orgId) {
+    const startedAt = data.metadata?.start_time_unix_secs
+      ? new Date(data.metadata.start_time_unix_secs * 1000).toISOString()
+      : new Date().toISOString();
+
     const { data: inserted } = await supabase
       .from("calls")
       .insert({
         organisation_id: orgId,
-        caller_phone_number: callerNumber ?? "unknown",
+        caller_phone_number: callerNumber ?? null,
+        assistant_phone_number: assistantPhoneNumber ?? null,
         call_status: status,
         transcript: transcriptText,
         summary,
         recording_url: recordingUrl,
         duration_seconds: durationSeconds ? Math.floor(Number(durationSeconds)) : null,
         ended_at: new Date().toISOString(),
-        started_at: new Date().toISOString(),
+        started_at: startedAt,
         metadata: {
           elevenlabs_conversation_id: conversationId,
           elevenlabs_agent_id: agentId,
@@ -212,12 +257,50 @@ export async function POST(req: NextRequest) {
     console.log(`[ElevenLabs Webhook] Inserted new call record id=${callDbId}`);
   }
 
-  // ── Async: send booking + summary alert ───────────────────────────────────
+  // ── Async: send call + booking alerts ─────────────────────────────────────
   void (async () => {
     try {
       if (!orgId || !conversationId) return;
 
-      // Find a booking linked to this call
+      const { data: alertConfig } = await supabase
+        .from("organisation_alert_configs")
+        .select("*")
+        .eq("organisation_id", orgId)
+        .maybeSingle();
+
+      if (!alertConfig) return;
+
+      const { data: org } = await supabase
+        .from("organisations")
+        .select("name")
+        .eq("id", orgId)
+        .maybeSingle();
+
+      const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
+      const config = alertConfig as AlertConfig;
+
+      const callSuccessful =
+        data.status !== "error" &&
+        data.analysis?.call_successful !== "failure" &&
+        (data.analysis?.call_successful === "success" || data.status === "done");
+
+      // ── Call completed alert (immediate post-call) ────────────────────────
+      if (callSuccessful) {
+        const durationSecs = durationSeconds ? Math.floor(Number(durationSeconds)) : 0;
+        const callMsg = buildCallAlertMessage({
+          orgName,
+          callerPhone: callerNumber,
+          assistantPhone: assistantPhoneNumber,
+          durationSeconds: durationSecs,
+          summary,
+          conversationId,
+        });
+
+        await dispatchAlerts(config, "new_call", callMsg);
+        console.log(`[ElevenLabs Webhook] Call alert dispatched for org: ${orgId}`);
+      }
+
+      // ── Booking alert (if appointment was created during the call) ────────
       const bookingSelect =
         "id, customer_name, customer_email, customer_phone, summary, start_at, end_at, call_id, created_at";
 
@@ -230,6 +313,18 @@ export async function POST(req: NextRequest) {
             .eq("organisation_id", orgId)
             .maybeSingle()
         ).data ?? null;
+
+      if (!booking && callDbId) {
+        booking =
+          (
+            await supabase
+              .from("appointments")
+              .select(bookingSelect)
+              .eq("call_id", callDbId)
+              .eq("organisation_id", orgId)
+              .maybeSingle()
+          ).data ?? null;
+      }
 
       // Fall back: orphan appointment created within last 25 mins without call_id
       if (!booking) {
@@ -256,25 +351,9 @@ export async function POST(req: NextRequest) {
       }
 
       if (!booking) {
-        console.log(`[ElevenLabs Webhook] No booking for conversation ${conversationId} — skipping alert.`);
         return;
       }
 
-      const { data: alertConfig } = await supabase
-        .from("organisation_alert_configs")
-        .select("*")
-        .eq("organisation_id", orgId)
-        .maybeSingle();
-
-      if (!alertConfig) return;
-
-      const { data: org } = await supabase
-        .from("organisations")
-        .select("name")
-        .eq("id", orgId)
-        .maybeSingle();
-
-      const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
       const b = booking as {
         customer_name?: string;
         customer_email?: string;
@@ -317,8 +396,8 @@ export async function POST(req: NextRequest) {
         summary: summary ?? undefined,
       });
 
-      await dispatchAlerts(alertConfig as AlertConfig, "new_booking", alertMsg);
-      console.log(`[ElevenLabs Webhook] Alert dispatched for org: ${orgId}`);
+      await dispatchAlerts(config, "new_booking", alertMsg);
+      console.log(`[ElevenLabs Webhook] Booking alert dispatched for org: ${orgId}`);
     } catch (e) {
       console.error("[ElevenLabs Webhook] Alert dispatch error (non-fatal):", e);
     }
