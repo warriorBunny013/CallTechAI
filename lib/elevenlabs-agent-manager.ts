@@ -392,3 +392,78 @@ export async function getElevenLabsAgent(agentId: string) {
   const client = getClient();
   return client.conversationalAi.agents.get(agentId);
 }
+
+// ── ElevenLabs Phone Number Management ────────────────────────────────────────
+
+const ELEVENLABS_API = "https://api.elevenlabs.io";
+
+function getApiKey(): string {
+  const key = process.env.ELEVENLABS_API_KEY;
+  if (!key) throw new Error("ELEVENLABS_API_KEY not configured");
+  return key;
+}
+
+/**
+ * Imports a Twilio phone number into ElevenLabs.
+ * After this, the number appears in the ElevenLabs dashboard under
+ * Agents → Phone Numbers, and ElevenLabs takes over the Twilio webhook
+ * automatically (pointing it to ElevenLabs' servers for native audio handling).
+ *
+ * Returns the ElevenLabs phone_number_id (e.g. "pn_xxxx").
+ */
+export async function importPhoneNumberToElevenLabs(
+  phoneNumber: string,
+  label: string,
+  twilioSid: string,
+  twilioToken: string
+): Promise<string> {
+  const res = await fetch(`${ELEVENLABS_API}/v1/convai/phone-numbers`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": getApiKey(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      phone_number: phoneNumber,
+      label,
+      sid: twilioSid,
+      token: twilioToken,
+      provider: "twilio",
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`ElevenLabs phone number import failed (${res.status}): ${errBody}`);
+  }
+
+  const data = await res.json() as { phone_number_id: string };
+  if (!data.phone_number_id) throw new Error("ElevenLabs did not return phone_number_id");
+  return data.phone_number_id;
+}
+
+/**
+ * Assigns an ElevenLabs agent to a phone number that was previously imported.
+ * After this, calls to that number are automatically routed to the agent.
+ */
+export async function assignAgentToElevenLabsPhoneNumber(
+  elevenLabsPhoneNumberId: string,
+  agentId: string
+): Promise<void> {
+  const res = await fetch(
+    `${ELEVENLABS_API}/v1/convai/phone-numbers/${elevenLabsPhoneNumberId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "xi-api-key": getApiKey(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ agent_id: agentId }),
+    }
+  );
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`ElevenLabs assign agent failed (${res.status}): ${errBody}`);
+  }
+}

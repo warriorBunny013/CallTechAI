@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseService } from "@/lib/supabase/service";
 import { getCurrentUserAndOrg } from "@/lib/org";
-import { patchAgentTwilioAudio } from "@/lib/elevenlabs-agent-manager";
+import { patchAgentTwilioAudio, assignAgentToElevenLabsPhoneNumber } from "@/lib/elevenlabs-agent-manager";
 
 export async function POST(request: NextRequest) {
   try {
@@ -40,10 +40,10 @@ export async function POST(request: NextRequest) {
     const supabase = getSupabaseService();
     const orgId = userAndOrg.organisationId;
 
-    // Verify phone number belongs to org
+    // Verify phone number belongs to org (also fetch ElevenLabs phone number ID for dashboard sync)
     const { data: phoneRow, error: phoneError } = await supabase
       .from("phone_numbers")
-      .select("id, phone_number")
+      .select("id, phone_number, elevenlabs_phone_number_id")
       .eq("id", phoneNumberId)
       .eq("organisation_id", orgId)
       .single();
@@ -88,13 +88,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Assistant not found" }, { status: 404 });
     }
 
-    // Ensure the agent is configured for Twilio (μ-law 8kHz I/O).
-    // Safe to call every time — it's an idempotent PATCH.
+    // Ensure the agent is configured for Twilio (μ-law 8kHz + override permissions).
+    // Safe to call every time — idempotent PATCH.
     try {
       await patchAgentTwilioAudio(agentId);
       console.log(`[assistants/launch] Patched agent ${agentId} for Twilio audio format`);
     } catch (patchErr) {
       console.warn("[assistants/launch] Could not patch agent audio format (continuing):", patchErr);
+    }
+
+    // Sync the agent assignment to ElevenLabs dashboard if we have an ElevenLabs phone number ID
+    const elevenLabsPhoneNumberId = (phoneRow as { elevenlabs_phone_number_id?: string | null }).elevenlabs_phone_number_id;
+    if (elevenLabsPhoneNumberId) {
+      try {
+        await assignAgentToElevenLabsPhoneNumber(elevenLabsPhoneNumberId, agentId);
+        console.log(`[assistants/launch] Assigned agent ${agentId} to ElevenLabs phone ${elevenLabsPhoneNumberId}`);
+      } catch (assignErr) {
+        console.warn("[assistants/launch] ElevenLabs phone assignment failed (continuing):", assignErr);
+      }
     }
 
     // Link the phone number to this specific ElevenLabs agent
