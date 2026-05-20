@@ -216,15 +216,76 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
         voiceId: config.voiceId,
         stability: 0.5,
         similarityBoost: 0.75,
+        // Required for Twilio Media Streams — μ-law 8 kHz is the only format Twilio supports
+        agentOutputAudioFormat: "ulaw_8000",
+      },
+      // Tell ElevenLabs to expect μ-law 8 kHz audio from Twilio (ASR input)
+      asr: {
+        userInputAudioFormat: "ulaw_8000",
       },
       ...(Object.keys(languagePresets).length > 0 ? { languagePresets } : {}),
     },
-  });
+    // Allow per-call conversation overrides (required so registerCall can inject
+    // org_id, intents, and dynamic variables without ElevenLabs rejecting the stream)
+    platformSettings: {
+      overrides: {
+        conversationConfigOverride: {
+          agent: {
+            prompt: {
+              prompt: true,
+            },
+            firstMessage: true,
+          },
+          tts: {
+            voiceId: true,
+          },
+        },
+      },
+    },
+  } as never);
 
   const agentId = (agent as { agentId?: string; agent_id?: string }).agentId
     ?? (agent as { agent_id?: string }).agent_id;
   if (!agentId) throw new Error("ElevenLabs did not return agent_id");
   return agentId;
+}
+
+/**
+ * Patches an existing ElevenLabs agent for Twilio compatibility:
+ *   - Sets μ-law 8000 Hz audio format for TTS output and ASR input
+ *   - Enables conversation override permissions (prompt, first message, voice)
+ *
+ * This is required for Twilio Media Streams and for registerCall to inject
+ * per-call dynamic data without ElevenLabs rejecting the stream.
+ * Safe to call multiple times — idempotent PATCH.
+ */
+export async function patchAgentTwilioAudio(agentId: string): Promise<void> {
+  const client = getClient();
+  await client.conversationalAi.agents.update(agentId, {
+    conversationConfig: {
+      tts: {
+        agentOutputAudioFormat: "ulaw_8000",
+      } as never,
+      asr: {
+        userInputAudioFormat: "ulaw_8000",
+      } as never,
+    },
+    platformSettings: {
+      overrides: {
+        conversationConfigOverride: {
+          agent: {
+            prompt: {
+              prompt: true,
+            },
+            firstMessage: true,
+          },
+          tts: {
+            voiceId: true,
+          },
+        },
+      },
+    },
+  } as never);
 }
 
 export interface ElevenLabsAgentUpdate {
@@ -330,4 +391,79 @@ export async function deleteElevenLabsAgent(agentId: string): Promise<void> {
 export async function getElevenLabsAgent(agentId: string) {
   const client = getClient();
   return client.conversationalAi.agents.get(agentId);
+}
+
+// ── ElevenLabs Phone Number Management ────────────────────────────────────────
+
+const ELEVENLABS_API = "https://api.elevenlabs.io";
+
+function getApiKey(): string {
+  const key = process.env.ELEVENLABS_API_KEY;
+  if (!key) throw new Error("ELEVENLABS_API_KEY not configured");
+  return key;
+}
+
+/**
+ * Imports a Twilio phone number into ElevenLabs.
+ * After this, the number appears in the ElevenLabs dashboard under
+ * Agents → Phone Numbers, and ElevenLabs takes over the Twilio webhook
+ * automatically (pointing it to ElevenLabs' servers for native audio handling).
+ *
+ * Returns the ElevenLabs phone_number_id (e.g. "pn_xxxx").
+ */
+export async function importPhoneNumberToElevenLabs(
+  phoneNumber: string,
+  label: string,
+  twilioSid: string,
+  twilioToken: string
+): Promise<string> {
+  const res = await fetch(`${ELEVENLABS_API}/v1/convai/phone-numbers`, {
+    method: "POST",
+    headers: {
+      "xi-api-key": getApiKey(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      phone_number: phoneNumber,
+      label,
+      sid: twilioSid,
+      token: twilioToken,
+      provider: "twilio",
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`ElevenLabs phone number import failed (${res.status}): ${errBody}`);
+  }
+
+  const data = await res.json() as { phone_number_id: string };
+  if (!data.phone_number_id) throw new Error("ElevenLabs did not return phone_number_id");
+  return data.phone_number_id;
+}
+
+/**
+ * Assigns an ElevenLabs agent to a phone number that was previously imported.
+ * After this, calls to that number are automatically routed to the agent.
+ */
+export async function assignAgentToElevenLabsPhoneNumber(
+  elevenLabsPhoneNumberId: string,
+  agentId: string
+): Promise<void> {
+  const res = await fetch(
+    `${ELEVENLABS_API}/v1/convai/phone-numbers/${elevenLabsPhoneNumberId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "xi-api-key": getApiKey(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ agent_id: agentId }),
+    }
+  );
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`ElevenLabs assign agent failed (${res.status}): ${errBody}`);
+  }
 }

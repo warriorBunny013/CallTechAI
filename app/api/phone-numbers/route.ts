@@ -10,10 +10,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { getSupabaseService } from '@/lib/supabase/service'
 import { getCurrentUserAndOrg } from '@/lib/org'
-
-const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL ??
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://calltechai.com')
+import {
+  importPhoneNumberToElevenLabs,
+  assignAgentToElevenLabsPhoneNumber,
+  patchAgentTwilioAudio,
+} from '@/lib/elevenlabs-agent-manager'
 
 function normalizeE164(phone: string): string {
   const digits = phone.replace(/\D/g, '')
@@ -110,53 +111,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Configure Twilio webhook on this number to point to our inbound call handler
-    const webhookUrl = `${APP_URL}/api/webhooks/twilio`
-    let twilioConfigured = false
-
+    // Step 1: Import the number into ElevenLabs.
+    // This registers it in the ElevenLabs dashboard and ElevenLabs will
+    // automatically update the Twilio webhook to their servers for native audio handling.
+    let elevenLabsPhoneNumberId: string | null = null
+    let elevenLabsRegistered = false
     try {
-      // Use Twilio REST API to update incoming call webhook
-      const twilioApiUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/IncomingPhoneNumbers.json`
-      const searchRes = await fetch(
-        `${twilioApiUrl}?PhoneNumber=${encodeURIComponent(e164Number)}`,
-        {
-          headers: {
-            Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64')}`,
-          },
-        }
+      elevenLabsPhoneNumberId = await importPhoneNumberToElevenLabs(
+        e164Number,
+        label ?? e164Number,
+        twilioAccountSid,
+        twilioAuthToken
       )
-      if (searchRes.ok) {
-        const searchData = await searchRes.json()
-        const numbers = searchData.incoming_phone_numbers ?? []
-        if (numbers.length > 0) {
-          const twilioNumberSid = numbers[0].sid
-          const updateRes = await fetch(
-            `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/IncomingPhoneNumbers/${twilioNumberSid}.json`,
-            {
-              method: 'POST',
-              headers: {
-                Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString('base64')}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: new URLSearchParams({
-                VoiceUrl: webhookUrl,
-                VoiceMethod: 'POST',
-                StatusCallback: `${webhookUrl}?status=1`,
-                StatusCallbackMethod: 'GET',
-              }).toString(),
-            }
-          )
-          twilioConfigured = updateRes.ok
-          if (!updateRes.ok) {
-            const errText = await updateRes.text()
-            console.warn('[phone-numbers] Twilio webhook update failed:', updateRes.status, errText)
-          }
-        }
-      }
+      elevenLabsRegistered = true
+      console.log(`[phone-numbers] Registered in ElevenLabs: ${elevenLabsPhoneNumberId}`)
     } catch (e) {
-      console.warn('[phone-numbers] Twilio webhook setup error (number saved anyway):', e)
+      console.warn('[phone-numbers] ElevenLabs import failed (saving locally anyway):', e)
     }
 
+    // Step 2: Save to our DB
     const { data: savedPhoneNumber, error: dbError } = await supabase
       .from('phone_numbers')
       .insert({
@@ -169,6 +142,7 @@ export async function POST(request: NextRequest) {
         twilio_account_sid: twilioAccountSid,
         twilio_auth_token: twilioAuthToken,
         label: label ?? null,
+        elevenlabs_phone_number_id: elevenLabsPhoneNumberId ?? null,
       } as Record<string, unknown>)
       .select()
       .single()
@@ -178,7 +152,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Failed to save phone number: ${dbError.message}` }, { status: 500 })
     }
 
-    // Auto-assign the org's default (or first) assistant so calls work immediately
+    // Step 3: Auto-assign the org's default (or first) assistant
     let assistantLinked = false
     try {
       const { data: defaultAssistant } = await supabase
@@ -191,18 +165,34 @@ export async function POST(request: NextRequest) {
         .limit(1)
         .maybeSingle()
 
-      if (defaultAssistant?.elevenlabs_agent_id) {
+      const agentElevenLabsId = (defaultAssistant as { elevenlabs_agent_id?: string } | null)?.elevenlabs_agent_id
+
+      if (agentElevenLabsId) {
+        // Patch agent for Twilio compatibility (μ-law + override permissions)
+        await patchAgentTwilioAudio(agentElevenLabsId).catch((e) =>
+          console.warn('[phone-numbers] patchAgentTwilioAudio failed:', e)
+        )
+
+        // Assign in our DB
         await supabase
           .from('phone_numbers')
           .update({
             assistant_id: (defaultAssistant as { id: string }).id,
-            elevenlabs_agent_id: (defaultAssistant as { elevenlabs_agent_id: string }).elevenlabs_agent_id,
+            elevenlabs_agent_id: agentElevenLabsId,
           } as Record<string, unknown>)
           .eq('id', (savedPhoneNumber as { id: string }).id)
+
+        // Assign in ElevenLabs (so the number → agent link is visible in their dashboard)
+        if (elevenLabsPhoneNumberId) {
+          await assignAgentToElevenLabsPhoneNumber(elevenLabsPhoneNumberId, agentElevenLabsId).catch((e) =>
+            console.warn('[phone-numbers] ElevenLabs assign agent failed:', e)
+          )
+        }
+
         assistantLinked = true
         console.log(
           `[phone-numbers] Auto-linked assistant "${(defaultAssistant as { name: string }).name}" ` +
-          `(${(defaultAssistant as { elevenlabs_agent_id: string }).elevenlabs_agent_id}) to ${e164Number}`
+          `(${agentElevenLabsId}) to ${e164Number}`
         )
       }
     } catch (e) {
@@ -212,12 +202,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         phoneNumber: savedPhoneNumber,
-        webhookConfigured: twilioConfigured,
+        elevenLabsRegistered,
+        elevenLabsPhoneNumberId,
         assistantLinked,
-        webhookUrl,
-        message: twilioConfigured
-          ? 'Phone number added and Twilio webhook configured.'
-          : 'Phone number added. Please configure the webhook manually in Twilio console.',
+        message: elevenLabsRegistered
+          ? 'Phone number added and registered in ElevenLabs.'
+          : 'Phone number added. Visit ElevenLabs dashboard to register it manually.',
       },
       { status: 201 }
     )
