@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseService } from "@/lib/supabase/service";
 import { getCurrentUserAndOrg } from "@/lib/org";
+import { patchAgentTwilioAudio } from "@/lib/elevenlabs-agent-manager";
 
 export async function POST(request: NextRequest) {
   try {
@@ -85,6 +86,15 @@ export async function POST(request: NextRequest) {
 
     if (!agentId) {
       return NextResponse.json({ error: "Assistant not found" }, { status: 404 });
+    }
+
+    // Ensure the agent is configured for Twilio (μ-law 8kHz I/O).
+    // Safe to call every time — it's an idempotent PATCH.
+    try {
+      await patchAgentTwilioAudio(agentId);
+      console.log(`[assistants/launch] Patched agent ${agentId} for Twilio audio format`);
+    } catch (patchErr) {
+      console.warn("[assistants/launch] Could not patch agent audio format (continuing):", patchErr);
     }
 
     // Link the phone number to this specific ElevenLabs agent

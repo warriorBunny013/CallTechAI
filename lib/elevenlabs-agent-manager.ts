@@ -216,15 +216,40 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
         voiceId: config.voiceId,
         stability: 0.5,
         similarityBoost: 0.75,
+        // Required for Twilio Media Streams — μ-law 8 kHz is the only format Twilio supports
+        agentOutputAudioFormat: "ulaw_8000",
+      },
+      // Tell ElevenLabs to expect μ-law 8 kHz audio from Twilio (ASR input)
+      asr: {
+        userInputAudioFormat: "ulaw_8000",
       },
       ...(Object.keys(languagePresets).length > 0 ? { languagePresets } : {}),
     },
-  });
+  } as never);
 
   const agentId = (agent as { agentId?: string; agent_id?: string }).agentId
     ?? (agent as { agent_id?: string }).agent_id;
   if (!agentId) throw new Error("ElevenLabs did not return agent_id");
   return agentId;
+}
+
+/**
+ * Patches an existing ElevenLabs agent to use μ-law 8000 Hz audio format.
+ * This is required for Twilio Media Streams to work correctly.
+ * Safe to call multiple times — just a PATCH with the same values.
+ */
+export async function patchAgentTwilioAudio(agentId: string): Promise<void> {
+  const client = getClient();
+  await client.conversationalAi.agents.update(agentId, {
+    conversationConfig: {
+      tts: {
+        agentOutputAudioFormat: "ulaw_8000",
+      } as never,
+      asr: {
+        userInputAudioFormat: "ulaw_8000",
+      } as never,
+    },
+  } as never);
 }
 
 export interface ElevenLabsAgentUpdate {
