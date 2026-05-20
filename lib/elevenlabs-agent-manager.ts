@@ -225,6 +225,23 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
       },
       ...(Object.keys(languagePresets).length > 0 ? { languagePresets } : {}),
     },
+    // Allow per-call conversation overrides (required so registerCall can inject
+    // org_id, intents, and dynamic variables without ElevenLabs rejecting the stream)
+    platformSettings: {
+      overrides: {
+        conversationConfigOverride: {
+          agent: {
+            prompt: {
+              prompt: true,
+            },
+            firstMessage: true,
+          },
+          tts: {
+            voiceId: true,
+          },
+        },
+      },
+    },
   } as never);
 
   const agentId = (agent as { agentId?: string; agent_id?: string }).agentId
@@ -234,9 +251,13 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
 }
 
 /**
- * Patches an existing ElevenLabs agent to use μ-law 8000 Hz audio format.
- * This is required for Twilio Media Streams to work correctly.
- * Safe to call multiple times — just a PATCH with the same values.
+ * Patches an existing ElevenLabs agent for Twilio compatibility:
+ *   - Sets μ-law 8000 Hz audio format for TTS output and ASR input
+ *   - Enables conversation override permissions (prompt, first message, voice)
+ *
+ * This is required for Twilio Media Streams and for registerCall to inject
+ * per-call dynamic data without ElevenLabs rejecting the stream.
+ * Safe to call multiple times — idempotent PATCH.
  */
 export async function patchAgentTwilioAudio(agentId: string): Promise<void> {
   const client = getClient();
@@ -248,6 +269,21 @@ export async function patchAgentTwilioAudio(agentId: string): Promise<void> {
       asr: {
         userInputAudioFormat: "ulaw_8000",
       } as never,
+    },
+    platformSettings: {
+      overrides: {
+        conversationConfigOverride: {
+          agent: {
+            prompt: {
+              prompt: true,
+            },
+            firstMessage: true,
+          },
+          tts: {
+            voiceId: true,
+          },
+        },
+      },
     },
   } as never);
 }
