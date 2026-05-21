@@ -57,25 +57,30 @@ function addMinutes(date: Date, mins: number): Date {
 /**
  * Normalise a voice-transcribed email address into a valid typed email.
  *
- * Voice ASR is very unreliable for email — it mishears digits, inserts filler
- * words ("the", "a"), and mangles domain names.  We apply a best-effort
- * normalisation and then validate; if validation still fails the caller is
- * asked to skip email (it is optional).
+ * Voice / ASR commonly produces variations like:
+ *   "uditi zero one three at gmail dot com"
+ *   "uditi013 at the rate gmail dot com"   ← Indian English for @
+ *   "uditi at the red gmail dot com"       ← ASR mishear of "at the rate"
+ *   "uditi at the right gmail dot com"     ← another mishear
+ *   "u d i t i 0 1 3 at gmail dot com"
  *
- * Handles common patterns:
- * - "at" / "at the" / "@" → @
+ * Handles:
+ * - "at the rate" / "at the red" / "at the right" / "at the rate of" → @
+ * - "at the" / "at a" → @
+ * - plain "at" → @
  * - "dot" / "period" → .
  * - "underscore" / "under score" → _
  * - "dash" / "hyphen" → -
  * - Spoken digits ("zero"–"nine") → numeral
- * - Common domain mishearings (e.g. "g mail" → "gmail")
- * - Strips stray filler words between username and domain
- * - Collapses spaces inside the local-part and domain
+ * - Common domain mis-spacings: "g mail" → "gmail", "hot mail" → "hotmail"
+ * - Filler words in domain ("the", "a", "an") stripped
+ * - TLD fusion: "gmailcom" → "gmail.com"
+ * - Collapses all remaining spaces inside local-part and domain
  */
 function normaliseEmail(raw: string): string {
   let s = raw.trim().toLowerCase();
 
-  // ── 1. Replace spoken punctuation ───────────────────────────────────────
+  // ── 1. Spoken punctuation ────────────────────────────────────────────────
   s = s.replace(/\bunderscore\b/g, "_");
   s = s.replace(/\bunder\s+score\b/g, "_");
   s = s.replace(/\bdash\b/g, "-");
@@ -92,38 +97,53 @@ function normaliseEmail(raw: string): string {
     s = s.replace(new RegExp(`\\b${word}\\b`, "g"), digit);
   }
 
-  // ── 3. Normalise common domain mishearings before converting "@" ─────────
-  // "g mail" / "gmail" confusion — ASR sometimes adds a space
+  // ── 3. Fix common domain mis-spacings ────────────────────────────────────
   s = s.replace(/\bg\s+mail\b/g, "gmail");
-  // "hot mail" → "hotmail", "out look" → "outlook", "yahoo mail" → "yahoomail"
   s = s.replace(/\bhot\s+mail\b/g, "hotmail");
   s = s.replace(/\bout\s+look\b/g, "outlook");
   s = s.replace(/\byahoo\s+mail\b/g, "yahoo");
+  s = s.replace(/\bi\s+cloud\b/g, "icloud");
 
-  // ── 4. Handle "at the <domain>" — filler word after "at" ────────────────
-  // "uditi at the gmail" → "uditi@gmail"
+  // ── 4. Convert "at the rate …" and all its misheard variants → "@" ───────
+  // Indian English uses "at the rate" for @; ASR often mishears it as
+  // "at the red", "at the right", "at the rate of", etc.
+  s = s.replace(/\s+at\s+the\s+rate\s+of\s+/g, "@");
+  s = s.replace(/\s+at\s+the\s+rate\s+/g, "@");
+  s = s.replace(/\s+at\s+the\s+red\s+/g, "@");
+  s = s.replace(/\s+at\s+the\s+right\s+/g, "@");
+  s = s.replace(/\s+at\s+the\s+rate\b/g, "@");
+  // Generic "at the X" where X is not a domain-looking word → treat as @
   s = s.replace(/\s+at\s+the\s+/g, "@");
   s = s.replace(/\s+at\s+a\s+/g, "@");
-  // Standard "at" with surrounding spaces
+  // Standard " at " with surrounding spaces
   s = s.replace(/\s+at\s+/g, "@");
-  // Bare "at" word boundary (catches anything remaining)
+  // Bare "at" word boundary (anything remaining)
   s = s.replace(/\bat\b/g, "@");
 
   // ── 5. Collapse spaces inside each half ─────────────────────────────────
   if (s.includes("@")) {
     const atIdx = s.indexOf("@");
     const local = s.slice(0, atIdx).replace(/\s+/g, "");
-    // Remove any stray filler words that crept into the domain portion
-    let domain = s.slice(atIdx + 1).replace(/\b(the|a|an)\b/g, "").replace(/\s+/g, "");
-    // Ensure domain has a dot — if it ends in known TLDs without dot, insert it
-    // e.g. "gmailcom" → "gmail.com", "yahoocom" → "yahoo.com"
-    domain = domain.replace(/(gmail|yahoo|hotmail|outlook|icloud|proton|me)(com|net|org|co)$/, "$1.$2");
+    // Strip stray filler words that crept into the domain portion
+    let domain = s.slice(atIdx + 1).replace(/\b(the|a|an|red|right|rate)\b/g, "").replace(/\s+/g, "");
+    // Fix TLD fusion: "gmailcom" → "gmail.com"
+    domain = domain.replace(/(gmail|yahoo|hotmail|outlook|icloud|proton|me)\.(com|net|org|co\.uk)$/i, "$1.$2");
+    domain = domain.replace(/(gmail|yahoo|hotmail|outlook|icloud|proton|me)(com|net|org)$/i, "$1.$2");
     s = `${local}@${domain}`;
   } else {
     s = s.replace(/\s+/g, "");
   }
 
   return s;
+}
+
+/** Return a human-readable spelling of an email for the agent to read back. */
+export function spellEmail(email: string): string {
+  // e.g. "uditi013@gmail.com" → "u-d-i-t-i-0-1-3 at gmail dot com"
+  const [local, domain] = email.split("@");
+  const spelledLocal = local.split("").join("-");
+  const domainReadable = (domain ?? "").replace(/\./g, " dot ");
+  return `${spelledLocal} at ${domainReadable}`;
 }
 
 export async function GET() {
@@ -165,17 +185,27 @@ export async function POST(req: NextRequest) {
       return respond("What is this appointment for — for example, a consultation or a checkup?");
     }
 
-    // Email is optional — voice ASR is unreliable for email addresses.
-    // Validate if provided; if it looks wrong, book without it rather than
-    // blocking the whole booking on a bad transcript.
+    // Email is required — validate after normalisation.
+    // If it still looks wrong, ask the caller to re-spell it in two parts.
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const validatedEmail = customerEmail && emailRegex.test(customerEmail)
-      ? customerEmail
-      : null;
 
-    if (customerEmail && !validatedEmail) {
-      console.warn("[book-appointment] Could not parse email, booking without it:", customerEmail);
+    if (!customerEmail) {
+      return respond(
+        "I still need your email address to send the calendar invite. " +
+        "Please tell me the part before the at-sign first, like 'john one two three'."
+      );
     }
+
+    if (!emailRegex.test(customerEmail)) {
+      // Give the caller the normalised version so they can correct it
+      return respond(
+        `I want to confirm your email. I understood it as: ${customerEmail}. ` +
+        "Could you say the username part — that's everything before the at-sign — one character at a time? " +
+        "For example: 'j-o-h-n-1-2-3'."
+      );
+    }
+
+    const validatedEmail = customerEmail;
 
     const [year, month, day] = date.split("-").map(Number);
     if (!year || !month || !day) {
@@ -347,13 +377,9 @@ export async function POST(req: NextRequest) {
       hour: "numeric", minute: "2-digit", hour12: true, timeZone: timezone,
     });
 
-    const emailLine = validatedEmail
-      ? `A calendar invite has been sent to ${validatedEmail}.`
-      : "No calendar invite was sent — we didn't catch a valid email address.";
-
     return respond(
       `You're all booked, ${customerName}! Your ${purpose} appointment is confirmed for ${friendlyDate} at ${friendlyTime}. ` +
-        `${emailLine} Is there anything else I can help you with?`
+        `A calendar invite has been sent to ${validatedEmail}. Is there anything else I can help you with?`
     );
   } catch (err) {
     console.error("[book-appointment] Unhandled error:", err);

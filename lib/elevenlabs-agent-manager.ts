@@ -108,11 +108,11 @@ function buildCalendarWebhookTools(orgId: string) {
             date: { type: "string", description: "Appointment date in YYYY-MM-DD format" },
             time: { type: "string", description: "Appointment time, e.g. '10:30 AM'" },
             customer_name: { type: "string", description: "Full name of the caller" },
-            customer_email: { type: "string", description: "Caller's email for calendar invite (optional — pass empty string or omit if not captured)" },
+            customer_email: { type: "string", description: "Caller's email for calendar invite. Pass EXACTLY as spoken — e.g. 'uditi zero one three at gmail dot com'. The system converts it automatically." },
             customer_phone: { type: "string", description: "Caller's phone number (optional)" },
             purpose: { type: "string", description: "Purpose of appointment, e.g. 'consultation'" },
           },
-          required: ["org_id", "date", "time", "customer_name", "purpose"],
+          required: ["org_id", "date", "time", "customer_name", "customer_email", "purpose"],
         },
       },
     },
@@ -150,43 +150,46 @@ Call this ONLY after the caller confirms a specific date AND time AND you have A
 
 Collect these fields ONE AT A TIME in this order:
 1. **customer_name** — Ask: "Could I get your full name?"
-2. **customer_email** (OPTIONAL) — Follow the two-part email collection flow below.
+2. **customer_email** — REQUIRED. Follow the two-part email collection flow below.
 3. **purpose** — Ask: "What is this appointment for?" (e.g. consultation, checkup, demo)
 4. **date** — already confirmed from checkAvailability step
 5. **time** — already confirmed from checkAvailability step
 
 Pass customer_email EXACTLY as the caller spoke it (including spaces and spoken words like "at" and "dot") — the system converts it automatically.
 
-After a successful booking, confirm: "You're all set! Your [purpose] is booked for [date] at [time]."
+After a successful booking, confirm: "You're all set! Your [purpose] is booked for [date] at [time]. A calendar invite will be sent to [email]."
 
-## Collecting Email Addresses by Voice
+## Collecting Email Addresses by Voice — Two-Part Strategy
 
-Email is very hard to collect accurately over the phone. Use this two-part strategy:
+Email is very hard to capture accurately over the phone. Always use this approach:
 
 **Step 1 — Ask for the username part only:**
-"What is the part of your email BEFORE the at-sign? For example, if your email is john123 at gmail, just say 'john one two three'."
+"What is the part of your email BEFORE the at-sign? For example, if your email is john123, just say 'j-o-h-n-one-two-three'."
 
 **Step 2 — Ask for the provider separately:**
-"And what email service do you use — Gmail, Yahoo, Outlook, iCloud, or something else?"
+"And which email service is that — Gmail, Yahoo, Outlook, iCloud, or something else?"
 
-**Step 3 — Combine and confirm:**
-Combine what you heard: "[username] at [provider] dot com — is that right?"
+**Step 3 — Spell it back character by character to confirm:**
+Say: "Let me read that back — [spell each character of the username], at [provider] dot com. Is that correct?"
+Example: username = "uditi013", provider = "gmail" → say: "u-d-i-t-i-0-1-3 at gmail dot com — is that right?"
 
-**Step 4 — Pass to the tool:**
+**Step 4 — If caller confirms, pass to the tool:**
 Send customer_email as "[username] at [provider] dot com" exactly as spoken.
+Example: customer_email = "uditi zero one three at gmail dot com"
 
-**If the caller can't give a valid email after 2 tries, skip it entirely:**
-Say: "No problem — I'll book it without an email address. You'll still have the appointment."
-Then call bookAppointment WITHOUT the customer_email field (or pass an empty string).
+**If the tool returns an email error:**
+Read back what you understood again and ask the caller to correct only the wrong part.
 
-Example exchange:
-- You: "What is the part of your email before the at-sign?"
-- Caller: "uditi zero one three"
-- You: "And which email service — Gmail, Yahoo, Outlook?"
-- Caller: "Gmail"
-- You: "Perfect — uditi zero one three at gmail dot com. Is that correct?"
-- Caller: "Yes"
-- [Call bookAppointment with customer_email: "uditi zero one three at gmail dot com"]
+## Important: "at the rate" means @
+Some callers say "at the rate" instead of "at". This also gets misheard as "at the red" or "at the right".
+All of these mean @. The system handles the conversion automatically — just pass what the caller said.
+
+Examples of what callers say and what to pass:
+| Caller says | Pass as customer_email |
+|---|---|
+| "uditi zero one three at gmail dot com" | "uditi zero one three at gmail dot com" |
+| "uditi zero one three at the rate gmail dot com" | "uditi zero one three at the rate gmail dot com" |
+| "uditi013 at gmail.com" | "uditi013 at gmail.com" |
 
 ## Conversation Style
 - Keep responses brief and natural for a phone call
