@@ -257,14 +257,11 @@ export async function POST(req: NextRequest) {
     console.log(`[ElevenLabs Webhook] Inserted new call record id=${callDbId}`);
   }
 
-  // ── Async: send call + booking alerts ─────────────────────────────────────
-  void (async () => {
-    try {
-      if (!orgId || !conversationId) {
-        console.log("[ElevenLabs Webhook] Skipping alerts — no orgId or conversationId");
-        return;
-      }
-
+  // ── Send call + booking alerts (awaited — Vercel kills void async after response) ──
+  try {
+    if (!orgId || !conversationId) {
+      console.log("[ElevenLabs Webhook] Skipping alerts — no orgId or conversationId");
+    } else {
       const { data: alertConfig, error: alertErr } = await supabase
         .from("organisation_alert_configs")
         .select("*")
@@ -276,147 +273,163 @@ export async function POST(req: NextRequest) {
       }
 
       if (!alertConfig) {
-        console.log(`[ElevenLabs Webhook] No alert config for org ${orgId} — skipping alerts`);
-        return;
-      }
+        console.warn(`[ElevenLabs Webhook] No alert config for org ${orgId} — skipping alerts`);
+      } else {
+        // Cast and apply safe defaults for boolean columns that may be null in old rows
+        const rawConfig = alertConfig as Record<string, unknown>;
+        const config: AlertConfig = {
+          telegram_enabled: rawConfig.telegram_enabled === true,
+          telegram_bot_token: (rawConfig.telegram_bot_token as string | null) ?? null,
+          telegram_chat_id: (rawConfig.telegram_chat_id as string | null) ?? null,
+          // Default both alert toggles to TRUE if they've never been set
+          alert_on_new_call: rawConfig.alert_on_new_call !== false,
+          alert_on_new_booking: rawConfig.alert_on_new_booking !== false,
+        };
+        console.log(
+          `[ElevenLabs Webhook] Alert config: ` +
+          `telegram_enabled=${config.telegram_enabled} ` +
+          `chat_id=${config.telegram_chat_id} ` +
+          `on_call=${config.alert_on_new_call} ` +
+          `on_booking=${config.alert_on_new_booking}`
+        );
 
-      console.log(`[ElevenLabs Webhook] Alert config: telegram_enabled=${(alertConfig as AlertConfig).telegram_enabled} chat_id=${(alertConfig as AlertConfig).telegram_chat_id} on_call=${(alertConfig as AlertConfig).alert_on_new_call}`);
+        const { data: org } = await supabase
+          .from("organisations")
+          .select("name")
+          .eq("id", orgId)
+          .maybeSingle();
 
-      const { data: org } = await supabase
-        .from("organisations")
-        .select("name")
-        .eq("id", orgId)
-        .maybeSingle();
+        const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
 
-      const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
-      const config = alertConfig as AlertConfig;
+        // ElevenLabs sends status="done" for all normally-completed calls.
+        // call_successful may be undefined when evaluation criteria aren't configured.
+        const callSuccessful =
+          data.status === "done" &&
+          data.analysis?.call_successful !== "failure";
 
-      // Consider any completed (non-error) call as successful.
-      // ElevenLabs sends "done" for all normally-completed calls (phone + browser demo).
-      // call_successful may be undefined if the agent didn't run evaluation criteria.
-      const callSuccessful =
-        data.status !== "error" &&
-        data.analysis?.call_successful !== "failure" &&
-        data.status === "done";
+        console.log(`[ElevenLabs Webhook] status="${data.status}" call_successful="${data.analysis?.call_successful}" → callSuccessful=${callSuccessful}`);
 
-      // ── Call completed alert (immediate post-call) ────────────────────────
-      if (callSuccessful) {
-        const durationSecs = durationSeconds ? Math.floor(Number(durationSeconds)) : 0;
-        const callMsg = buildCallAlertMessage({
-          orgName,
-          callerPhone: callerNumber,
-          assistantPhone: assistantPhoneNumber,
-          durationSeconds: durationSecs,
-          summary,
-          conversationId,
-        });
+        // ── Call completed alert ──────────────────────────────────────────
+        if (callSuccessful) {
+          const durationSecs = durationSeconds ? Math.floor(Number(durationSeconds)) : 0;
+          const callMsg = buildCallAlertMessage({
+            orgName,
+            callerPhone: callerNumber,
+            assistantPhone: assistantPhoneNumber,
+            durationSeconds: durationSecs,
+            summary,
+            conversationId,
+          });
+          const callAlertResult = await dispatchAlerts(config, "new_call", callMsg);
+          console.log(`[ElevenLabs Webhook] Call alert result:`, JSON.stringify(callAlertResult));
+        } else {
+          console.log(
+            `[ElevenLabs Webhook] Skipping call alert — callSuccessful=${callSuccessful} ` +
+            `(status="${data.status}" call_successful="${data.analysis?.call_successful}")`
+          );
+        }
 
-        await dispatchAlerts(config, "new_call", callMsg);
-        console.log(`[ElevenLabs Webhook] Call alert dispatched for org: ${orgId}`);
-      }
+        // ── Booking alert (if appointment was created during the call) ────
+        const bookingSelect =
+          "id, customer_name, customer_email, customer_phone, summary, start_at, end_at, call_id, created_at";
 
-      // ── Booking alert (if appointment was created during the call) ────────
-      const bookingSelect =
-        "id, customer_name, customer_email, customer_phone, summary, start_at, end_at, call_id, created_at";
-
-      let booking =
-        (
-          await supabase
-            .from("appointments")
-            .select(bookingSelect)
-            .eq("call_id", conversationId)
-            .eq("organisation_id", orgId)
-            .maybeSingle()
-        ).data ?? null;
-
-      if (!booking && callDbId) {
-        booking =
+        let booking =
           (
             await supabase
               .from("appointments")
               .select(bookingSelect)
-              .eq("call_id", callDbId)
+              .eq("call_id", conversationId)
               .eq("organisation_id", orgId)
               .maybeSingle()
           ).data ?? null;
-      }
 
-      // Fall back: orphan appointment created within last 25 mins without call_id
-      if (!booking) {
-        const sinceIso = new Date(Date.now() - 25 * 60 * 1000).toISOString();
-        const { data: orphan } = await supabase
-          .from("appointments")
-          .select(bookingSelect)
-          .eq("organisation_id", orgId)
-          .is("call_id", null)
-          .gte("created_at", sinceIso)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        if (!booking && callDbId) {
+          booking =
+            (
+              await supabase
+                .from("appointments")
+                .select(bookingSelect)
+                .eq("call_id", callDbId)
+                .eq("organisation_id", orgId)
+                .maybeSingle()
+            ).data ?? null;
+        }
 
-        if (orphan) {
-          const oid = (orphan as { id: string }).id;
-          await supabase
+        // Fall back: orphan appointment created within last 25 mins without call_id
+        if (!booking) {
+          const sinceIso = new Date(Date.now() - 25 * 60 * 1000).toISOString();
+          const { data: orphan } = await supabase
             .from("appointments")
-            .update({ call_id: conversationId } as never)
-            .eq("id", oid);
-          booking = orphan;
-          console.log(`[ElevenLabs Webhook] Linked orphan appointment ${oid} → conversation ${conversationId}`);
+            .select(bookingSelect)
+            .eq("organisation_id", orgId)
+            .is("call_id", null)
+            .gte("created_at", sinceIso)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (orphan) {
+            const oid = (orphan as { id: string }).id;
+            await supabase
+              .from("appointments")
+              .update({ call_id: conversationId } as never)
+              .eq("id", oid);
+            booking = orphan;
+            console.log(`[ElevenLabs Webhook] Linked orphan appointment ${oid} → conversation ${conversationId}`);
+          }
+        }
+
+        if (booking) {
+          const b = booking as {
+            customer_name?: string;
+            customer_email?: string;
+            customer_phone?: string;
+            summary?: string;
+            start_at?: string;
+            end_at?: string;
+          };
+
+          const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
+          const startDate = b.start_at ? new Date(b.start_at) : null;
+          const friendlyDate = startDate
+            ? startDate.toLocaleDateString("en-US", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+                timeZone: timezone,
+              })
+            : "Unknown date";
+          const friendlyTime = startDate
+            ? startDate.toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+                hour12: true,
+                timeZone: timezone,
+              })
+            : "Unknown time";
+
+          const purposeMatch = b.summary?.match(/^(.+?)\s*—/);
+          const purpose = purposeMatch ? purposeMatch[1].trim() : (b.summary ?? "Appointment");
+
+          const alertMsg = buildBookingAlertMessage({
+            orgName,
+            customerName: b.customer_name ?? "Customer",
+            customerEmail: b.customer_email ?? "",
+            customerPhone: callerNumber ?? b.customer_phone ?? undefined,
+            purpose,
+            date: friendlyDate,
+            time: friendlyTime,
+            summary: summary ?? undefined,
+          });
+
+          await dispatchAlerts(config, "new_booking", alertMsg);
+          console.log(`[ElevenLabs Webhook] Booking alert dispatched for org: ${orgId}`);
         }
       }
-
-      if (!booking) {
-        return;
-      }
-
-      const b = booking as {
-        customer_name?: string;
-        customer_email?: string;
-        customer_phone?: string;
-        summary?: string;
-        start_at?: string;
-        end_at?: string;
-      };
-
-      const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
-      const startDate = b.start_at ? new Date(b.start_at) : null;
-      const friendlyDate = startDate
-        ? startDate.toLocaleDateString("en-US", {
-            weekday: "long",
-            month: "long",
-            day: "numeric",
-            timeZone: timezone,
-          })
-        : "Unknown date";
-      const friendlyTime = startDate
-        ? startDate.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-            timeZone: timezone,
-          })
-        : "Unknown time";
-
-      const purposeMatch = b.summary?.match(/^(.+?)\s*—/);
-      const purpose = purposeMatch ? purposeMatch[1].trim() : (b.summary ?? "Appointment");
-
-      const alertMsg = buildBookingAlertMessage({
-        orgName,
-        customerName: b.customer_name ?? "Customer",
-        customerEmail: b.customer_email ?? "",
-        customerPhone: callerNumber ?? b.customer_phone ?? undefined,
-        purpose,
-        date: friendlyDate,
-        time: friendlyTime,
-        summary: summary ?? undefined,
-      });
-
-      await dispatchAlerts(config, "new_booking", alertMsg);
-      console.log(`[ElevenLabs Webhook] Booking alert dispatched for org: ${orgId}`);
-    } catch (e) {
-      console.error("[ElevenLabs Webhook] Alert dispatch error (non-fatal):", e);
     }
-  })();
+  } catch (e) {
+    console.error("[ElevenLabs Webhook] Alert dispatch error (non-fatal):", e);
+  }
 
   return NextResponse.json({ received: true });
 }

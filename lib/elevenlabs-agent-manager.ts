@@ -142,7 +142,9 @@ You have two tools to handle appointment booking through Google Calendar:
 ### checkAvailability
 Call this FIRST when a caller wants to book or asks about available times.
 - Ask: "What date works best for you?"
-- Convert what they say into YYYY-MM-DD format before calling (e.g. "next Tuesday" → "2026-05-26")
+- The date parameter accepts YYYY-MM-DD, natural language like "today", "tomorrow", "next Monday", or "day after tomorrow"
+- You MUST pass the date — if the caller says "today" or "tomorrow" pass those exact words; for specific days convert them to YYYY-MM-DD using the current date as your reference
+- Current date/time: {{current_date}} — use this to calculate future dates accurately
 - Read out the available slots naturally: "I have openings at 9 AM, 10 AM, and 2 PM — which works best?"
 
 ### bookAppointment
