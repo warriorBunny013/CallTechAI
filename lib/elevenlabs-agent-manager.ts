@@ -261,6 +261,13 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
           },
         },
       },
+      // Post-call webhook — fires after every conversation so we can persist
+      // the transcript, trigger Telegram alerts, and link bookings.
+      ...(APP_URL ? {
+        webhook: {
+          url: `${APP_URL}/api/webhooks/elevenlabs`,
+        },
+      } : {}),
     },
   } as never);
 
@@ -271,9 +278,28 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
 }
 
 /**
+ * Patches an existing ElevenLabs agent to register the post-call webhook URL.
+ * This is required so ElevenLabs sends post-call transcription events to our
+ * server, which we use for Telegram alerts and booking persistence.
+ * Safe to call multiple times — idempotent PATCH.
+ */
+export async function patchAgentWebhook(agentId: string): Promise<void> {
+  if (!APP_URL) return;
+  const client = getClient();
+  await client.conversationalAi.agents.update(agentId, {
+    platformSettings: {
+      webhook: {
+        url: `${APP_URL}/api/webhooks/elevenlabs`,
+      },
+    },
+  } as never);
+}
+
+/**
  * Patches an existing ElevenLabs agent for Twilio compatibility:
  *   - Sets μ-law 8000 Hz audio format for TTS output and ASR input
  *   - Enables conversation override permissions (prompt, first message, voice)
+ *   - Sets post-call webhook URL for Telegram alerts and booking persistence
  *
  * This is required for Twilio Media Streams and for registerCall to inject
  * per-call dynamic data without ElevenLabs rejecting the stream.
@@ -304,6 +330,12 @@ export async function patchAgentTwilioAudio(agentId: string): Promise<void> {
           },
         },
       },
+      // Ensure post-call webhook is always set so Telegram alerts fire
+      ...(APP_URL ? {
+        webhook: {
+          url: `${APP_URL}/api/webhooks/elevenlabs`,
+        },
+      } : {}),
     },
   } as never);
 }

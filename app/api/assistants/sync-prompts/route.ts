@@ -15,6 +15,7 @@ import { getCurrentUserAndOrg } from "@/lib/org";
 import {
   buildAppointmentSchedulerPrompt,
   updateElevenLabsAgentPrompt,
+  patchAgentWebhook,
 } from "@/lib/elevenlabs-agent-manager";
 import { buildSystemPromptWithIntents } from "@/lib/elevenlabs-call";
 import type { IntentRow } from "@/lib/vapi-call";
@@ -74,6 +75,11 @@ export async function POST() {
       );
       const fullPrompt = buildSystemPromptWithIntents(basePrompt, intentRows);
       await updateElevenLabsAgentPrompt(row.elevenlabs_agent_id, fullPrompt);
+
+      // Also ensure the post-call webhook URL is set so Telegram alerts and
+      // booking persistence work for this agent.
+      await patchAgentWebhook(row.elevenlabs_agent_id);
+
       results.push({ name: row.name, ok: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

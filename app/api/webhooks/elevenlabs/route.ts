@@ -260,15 +260,27 @@ export async function POST(req: NextRequest) {
   // ── Async: send call + booking alerts ─────────────────────────────────────
   void (async () => {
     try {
-      if (!orgId || !conversationId) return;
+      if (!orgId || !conversationId) {
+        console.log("[ElevenLabs Webhook] Skipping alerts — no orgId or conversationId");
+        return;
+      }
 
-      const { data: alertConfig } = await supabase
+      const { data: alertConfig, error: alertErr } = await supabase
         .from("organisation_alert_configs")
         .select("*")
         .eq("organisation_id", orgId)
         .maybeSingle();
 
-      if (!alertConfig) return;
+      if (alertErr) {
+        console.error("[ElevenLabs Webhook] Alert config fetch error:", alertErr);
+      }
+
+      if (!alertConfig) {
+        console.log(`[ElevenLabs Webhook] No alert config for org ${orgId} — skipping alerts`);
+        return;
+      }
+
+      console.log(`[ElevenLabs Webhook] Alert config: telegram_enabled=${(alertConfig as AlertConfig).telegram_enabled} chat_id=${(alertConfig as AlertConfig).telegram_chat_id} on_call=${(alertConfig as AlertConfig).alert_on_new_call}`);
 
       const { data: org } = await supabase
         .from("organisations")
@@ -279,10 +291,13 @@ export async function POST(req: NextRequest) {
       const orgName = (org as { name?: string } | null)?.name ?? "Your Business";
       const config = alertConfig as AlertConfig;
 
+      // Consider any completed (non-error) call as successful.
+      // ElevenLabs sends "done" for all normally-completed calls (phone + browser demo).
+      // call_successful may be undefined if the agent didn't run evaluation criteria.
       const callSuccessful =
         data.status !== "error" &&
         data.analysis?.call_successful !== "failure" &&
-        (data.analysis?.call_successful === "success" || data.status === "done");
+        data.status === "done";
 
       // ── Call completed alert (immediate post-call) ────────────────────────
       if (callSuccessful) {
