@@ -24,6 +24,7 @@ import {
   getValidAccessToken,
   createCalendarEvent,
   queryFreeBusy,
+  localToUTC,
   type CalendarConnection,
 } from "@/lib/google-calendar";
 
@@ -150,6 +151,8 @@ export async function POST(req: NextRequest) {
       bufferTime: 15,
     };
 
+    const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
+
     const dateObj = new Date(Date.UTC(year, month - 1, day));
     const dayName = DAY_NAMES[dateObj.getUTCDay()];
 
@@ -159,10 +162,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const slotStart = new Date(Date.UTC(year, month - 1, day, parsed.hour, parsed.minute, 0));
+    // Convert all times from local (business owner's timezone) to UTC
+    const slotStart = localToUTC(year, month, day, parsed.hour, parsed.minute, timezone);
     const slotEnd   = addMinutes(slotStart, avail.appointmentDuration);
-    const dayStart  = new Date(Date.UTC(year, month - 1, day, avail.startHour, 0, 0));
-    const dayEnd    = new Date(Date.UTC(year, month - 1, day, avail.endHour, 0, 0));
+    const dayStart  = localToUTC(year, month, day, avail.startHour, 0, timezone);
+    const dayEnd    = localToUTC(year, month, day, avail.endHour, 0, timezone);
 
     if (slotStart < dayStart || slotEnd > dayEnd) {
       return respond(
@@ -214,7 +218,6 @@ export async function POST(req: NextRequest) {
       console.warn("[book-appointment] Freebusy check error (proceeding):", e);
     }
 
-    const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
     const eventSummary = `${purpose} — ${customerName}`;
     const eventDescription = [
       `Customer: ${customerName}`,
@@ -264,10 +267,10 @@ export async function POST(req: NextRequest) {
     }
 
     const friendlyDate = slotStart.toLocaleDateString("en-US", {
-      weekday: "long", month: "long", day: "numeric", timeZone: "UTC",
+      weekday: "long", month: "long", day: "numeric", timeZone: timezone,
     });
     const friendlyTime = slotStart.toLocaleTimeString("en-US", {
-      hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC",
+      hour: "numeric", minute: "2-digit", hour12: true, timeZone: timezone,
     });
 
     return respond(

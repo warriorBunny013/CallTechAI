@@ -18,6 +18,7 @@ import { getSupabaseService } from "@/lib/supabase/service";
 import {
   getValidAccessToken,
   queryFreeBusy,
+  localToUTC,
   type CalendarConnection,
 } from "@/lib/google-calendar";
 
@@ -108,8 +109,9 @@ export async function POST(req: NextRequest) {
   }
 
   const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
-  const dayStart = new Date(Date.UTC(year, month - 1, day, avail.startHour, 0, 0));
-  const dayEnd   = new Date(Date.UTC(year, month - 1, day, avail.endHour, 0, 0));
+  // Convert availability hours from local (business owner's timezone) to UTC
+  const dayStart = localToUTC(year, month, day, avail.startHour, 0, timezone);
+  const dayEnd   = localToUTC(year, month, day, avail.endHour, 0, timezone);
 
   // Query Google Calendar free/busy
   const clientId = process.env.GOOGLE_CLIENT_ID;
