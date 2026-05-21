@@ -142,25 +142,45 @@ You have two tools to handle appointment booking through Google Calendar:
 ### checkAvailability
 Call this FIRST when a caller wants to book or asks about available times.
 - Ask: "What date works best for you?"
-- Call checkAvailability with the date in YYYY-MM-DD format
-- Read out the available slots: "I have openings at 10:00 AM and 2:00 PM — which works best?"
+- Convert what they say into YYYY-MM-DD format before calling (e.g. "next Tuesday" → "2026-05-26")
+- Read out the available slots naturally: "I have openings at 9 AM, 10 AM, and 2 PM — which works best?"
 
 ### bookAppointment
-Call this ONLY after the caller confirms a specific date and time.
-Before calling, collect ALL of the following:
-1. customer_name — "Could I get your full name?"
-2. customer_email — "What email address should I send the calendar invite to?"
-3. date — confirmed in YYYY-MM-DD format
-4. time — confirmed in HH:MM AM/PM format
-5. purpose — "What is this appointment for?" (e.g. "consultation", "checkup")
+Call this ONLY after the caller confirms a specific date AND time AND you have ALL required fields below.
 
-After booking, confirm: "You're all set! Your [purpose] is booked for [date] at [time]. A calendar invite will be sent to [email]."
+Collect these fields ONE AT A TIME in this order:
+1. **customer_name** — Ask: "Could I get your full name?"
+2. **customer_email** — Ask: "What is your email address? Please say it slowly — for example: john, at, gmail, dot, com."
+   - IMPORTANT: The caller will say "at" for @ and "dot" for periods. Transcribe exactly what they say and pass it as-is to the tool — the system will convert it automatically.
+   - After they give the email, READ IT BACK to confirm: "Just to confirm, your email is [email] — is that right?"
+   - If they say no, ask them to repeat it.
+3. **purpose** — Ask: "What is this appointment for?" (e.g. consultation, checkup, demo)
+4. **date** — already confirmed from checkAvailability step
+5. **time** — already confirmed from checkAvailability step
+
+Pass customer_email EXACTLY as transcribed (including spaces and spoken words like "at" and "dot") — do NOT try to convert it yourself.
+
+After a successful booking, confirm: "You're all set! Your [purpose] is booked for [date] at [time]. A calendar invite will be sent to [email]."
+
+## Collecting Email Addresses by Voice
+
+Email is the hardest field to collect by voice. Follow this flow:
+1. Ask: "What is your email address? Take your time and say it slowly."
+2. After they speak, repeat it back letter by letter if it seems complex: "I have j-o-h-n at gmail dot com — is that right?"
+3. If the booking tool returns an error about the email, apologise and ask them to repeat it more slowly.
+
+Example exchange:
+- You: "What is your email address?"
+- Caller: "it's uditi zero one three at gmail dot com"
+- You: "Got it — uditi013 at gmail dot com. Is that correct?"
+- Caller: "Yes"
+- [Now call bookAppointment with customer_email: "uditi zero one three at gmail dot com"]
 
 ## Conversation Style
 - Keep responses brief and natural for a phone call
-- Speak one sentence at a time
 - Ask only one question at a time
 - Always be warm, professional, and helpful
+- Do not read out long lists — offer 3–4 time slots maximum
 
 Current date: {{current_date}}`;
 
@@ -241,6 +261,13 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
           },
         },
       },
+      // Post-call webhook — fires after every conversation so we can persist
+      // the transcript, trigger Telegram alerts, and link bookings.
+      ...(APP_URL ? {
+        webhook: {
+          url: `${APP_URL}/api/webhooks/elevenlabs`,
+        },
+      } : {}),
     },
   } as never);
 
@@ -251,9 +278,28 @@ export async function createElevenLabsAgent(config: ElevenLabsAgentConfig): Prom
 }
 
 /**
+ * Patches an existing ElevenLabs agent to register the post-call webhook URL.
+ * This is required so ElevenLabs sends post-call transcription events to our
+ * server, which we use for Telegram alerts and booking persistence.
+ * Safe to call multiple times — idempotent PATCH.
+ */
+export async function patchAgentWebhook(agentId: string): Promise<void> {
+  if (!APP_URL) return;
+  const client = getClient();
+  await client.conversationalAi.agents.update(agentId, {
+    platformSettings: {
+      webhook: {
+        url: `${APP_URL}/api/webhooks/elevenlabs`,
+      },
+    },
+  } as never);
+}
+
+/**
  * Patches an existing ElevenLabs agent for Twilio compatibility:
  *   - Sets μ-law 8000 Hz audio format for TTS output and ASR input
  *   - Enables conversation override permissions (prompt, first message, voice)
+ *   - Sets post-call webhook URL for Telegram alerts and booking persistence
  *
  * This is required for Twilio Media Streams and for registerCall to inject
  * per-call dynamic data without ElevenLabs rejecting the stream.
@@ -284,6 +330,12 @@ export async function patchAgentTwilioAudio(agentId: string): Promise<void> {
           },
         },
       },
+      // Ensure post-call webhook is always set so Telegram alerts fire
+      ...(APP_URL ? {
+        webhook: {
+          url: `${APP_URL}/api/webhooks/elevenlabs`,
+        },
+      } : {}),
     },
   } as never);
 }

@@ -54,6 +54,66 @@ function addMinutes(date: Date, mins: number): Date {
   return new Date(date.getTime() + mins * 60_000);
 }
 
+/**
+ * Normalise a voice-transcribed email address into a valid typed email.
+ *
+ * Speech-to-text converts spoken emails like:
+ *   "uditi zero one three at gmail dot com"
+ *   "uditi013 at gmail.com"
+ *   "uditi underscore 013 at gmail dot com"
+ *
+ * into the proper format: uditi013@gmail.com
+ *
+ * Handles:
+ * - "at" / " at " → @
+ * - "dot" → .
+ * - "underscore" / "under score" → _
+ * - "dash" / "hyphen" → -
+ * - "zero" → 0, "one" → 1, … "nine" → 9  (when surrounded by letters/digits)
+ * - Removes stray spaces between characters
+ */
+function normaliseEmail(raw: string): string {
+  let s = raw.trim().toLowerCase();
+
+  // Replace spoken words for special characters
+  s = s.replace(/\bunderscore\b/g, "_");
+  s = s.replace(/\bunder score\b/g, "_");
+  s = s.replace(/\bdash\b/g, "-");
+  s = s.replace(/\bhyphen\b/g, "-");
+  s = s.replace(/\bdot\b/g, ".");
+  s = s.replace(/\bperiod\b/g, ".");
+
+  // Spoken digits to numerals
+  const digitWords: Record<string, string> = {
+    zero: "0", one: "1", two: "2", three: "3", four: "4",
+    five: "5", six: "6", seven: "7", eight: "8", nine: "9",
+  };
+  for (const [word, digit] of Object.entries(digitWords)) {
+    s = s.replace(new RegExp(`\\b${word}\\b`, "g"), digit);
+  }
+
+  // "at" → "@"  (must come after digit replacement to avoid "eight" → "8" then "at" confusion)
+  // Match " at " with surrounding spaces, or " at " at start/end
+  s = s.replace(/\s+at\s+/g, "@");
+  // Edge case: "john at gmail.com" with no spaces captured above
+  // Also handle " at" at the very end before the domain if trimmed
+  s = s.replace(/\bat\b/g, "@");
+
+  // Remove spaces that snuck in between characters (e.g. "u d i t i" → "uditi")
+  // Only collapse spaces that are NOT surrounding "@"
+  // Strategy: collapse spaces in the local-part and domain separately
+  if (s.includes("@")) {
+    const atIdx = s.indexOf("@");
+    const local = s.slice(0, atIdx).replace(/\s+/g, "");
+    const domain = s.slice(atIdx + 1).replace(/\s+/g, "");
+    s = `${local}@${domain}`;
+  } else {
+    s = s.replace(/\s+/g, "");
+  }
+
+  return s;
+}
+
 export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "book-appointment (ElevenLabs)" });
 }
@@ -69,13 +129,16 @@ export async function POST(req: NextRequest) {
 
     const orgId = (body.org_id as string | undefined) ?? null;
     const customerName = (body.customer_name as string | undefined)?.trim() ?? null;
-    const customerEmail = (body.customer_email as string | undefined)?.trim() ?? null;
+    const rawEmail = (body.customer_email as string | undefined)?.trim() ?? null;
     const date = (body.date as string | undefined) ?? null;
     const time = (body.time as string | undefined) ?? null;
     const purpose = (body.purpose as string | undefined)?.trim() ?? null;
     const customerPhone = (body.customer_phone as string | undefined)?.trim() ?? null;
 
-    console.log("[book-appointment] Request:", { orgId, customerName, date, time, purpose });
+    // Normalise the email — speech-to-text sends "john at gmail dot com"
+    const customerEmail = rawEmail ? normaliseEmail(rawEmail) : null;
+
+    console.log("[book-appointment] Request:", { orgId, customerName, rawEmail, customerEmail, date, time, purpose });
 
     if (!orgId) {
       return respond("I couldn't identify your organisation. Please try again.");
@@ -95,7 +158,10 @@ export async function POST(req: NextRequest) {
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(customerEmail)) {
-      return respond("That email address doesn't look right. Could you spell it out again?");
+      return respond(
+        `I want to make sure I have the right email. I heard "${customerEmail}" — could you say it again slowly? ` +
+        `For example: "john, at, gmail, dot, com".`
+      );
     }
 
     const [year, month, day] = date.split("-").map(Number);

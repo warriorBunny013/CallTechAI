@@ -339,6 +339,20 @@ export default function AssistantsPage() {
   const [deletingAssistant, setDeletingAssistant] = useState<AssistantListItem | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [wizardKey, setWizardKey] = useState(0)
+  const [syncing, setSyncing] = useState(false)
+
+  const syncPrompts = async () => {
+    setSyncing(true)
+    try {
+      const res = await fetch("/api/assistants/sync-prompts", { method: "POST" })
+      const d = await res.json()
+      toast({ title: d.message ?? "Prompts synced", description: "Your assistant's booking instructions have been updated." })
+    } catch {
+      toast({ title: "Sync failed", description: "Could not update assistant prompts. Please try again.", variant: "destructive" })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   // audio
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null)
@@ -626,17 +640,29 @@ export default function AssistantsPage() {
                     {assistants.length} {assistants.length === 1 ? "assistant" : "assistants"} · Primary handles inbound calls
                   </p>
                 </div>
-                <Button
-                  onClick={() => {
-                    setWizardKey((k) => k + 1)
-                    setPageView("create")
-                    window.scrollTo({ top: 0, behavior: "smooth" })
-                  }}
-                  className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-bold rounded-xl shadow-lg shadow-[#84CC16]/25 h-11 px-5 shrink-0"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add assistants
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={syncPrompts}
+                    disabled={syncing}
+                    className="h-11 px-4 rounded-xl text-sm font-semibold shrink-0"
+                    title="Push latest booking instructions to your ElevenLabs agent"
+                  >
+                    {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                    Sync prompts
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setWizardKey((k) => k + 1)
+                      setPageView("create")
+                      window.scrollTo({ top: 0, behavior: "smooth" })
+                    }}
+                    className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-bold rounded-xl shadow-lg shadow-[#84CC16]/25 h-11 px-5 shrink-0"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add assistants
+                  </Button>
+                </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
