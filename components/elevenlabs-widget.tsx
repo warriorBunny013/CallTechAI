@@ -32,6 +32,17 @@ interface ElevenLabsWidgetProps {
   inline?: boolean;
   onConnectionChange?: (connected: boolean) => void;
   onTranscriptUpdate?: (transcript: TranscriptEntry[]) => void;
+  /** Dynamic variables injected per-session (e.g. org_id for booking tools) */
+  dynamicVariables?: Record<string, string | number | boolean>;
+  /** Per-session overrides for prompt, first message, or voice */
+  overrides?: {
+    agent?: {
+      prompt?: { prompt: string };
+      firstMessage?: string;
+      language?: string;
+    };
+    tts?: { voiceId?: string };
+  };
 }
 
 type Status = "idle" | "connecting" | "connected" | "error";
@@ -42,6 +53,8 @@ const ElevenLabsWidget: React.FC<ElevenLabsWidgetProps> = ({
   inline = false,
   onConnectionChange,
   onTranscriptUpdate,
+  dynamicVariables,
+  overrides,
 }) => {
   const [status, setStatus] = useState<Status>("idle");
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -75,6 +88,8 @@ const ElevenLabsWidget: React.FC<ElevenLabsWidgetProps> = ({
 
       const conversation = await Conversation.startSession({
         agentId: resolvedAgentId,
+        ...(dynamicVariables ? { dynamicVariables } : {}),
+        ...(overrides ? { overrides } : {}),
         onConnect: () => {
           setStatus("connected");
           onConnectionChange?.(true);
@@ -112,7 +127,7 @@ const ElevenLabsWidget: React.FC<ElevenLabsWidgetProps> = ({
       setError(`Failed to start call: ${msg}`);
       setStatus("error");
     }
-  }, [resolvedAgentId, onConnectionChange, onTranscriptUpdate]);
+  }, [resolvedAgentId, onConnectionChange, onTranscriptUpdate, dynamicVariables, overrides]);
 
   const endCall = useCallback(async () => {
     try {
