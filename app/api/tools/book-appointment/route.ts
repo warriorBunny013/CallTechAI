@@ -57,33 +57,33 @@ function addMinutes(date: Date, mins: number): Date {
 /**
  * Normalise a voice-transcribed email address into a valid typed email.
  *
- * Speech-to-text converts spoken emails like:
- *   "uditi zero one three at gmail dot com"
- *   "uditi013 at gmail.com"
- *   "uditi underscore 013 at gmail dot com"
+ * Voice ASR is very unreliable for email — it mishears digits, inserts filler
+ * words ("the", "a"), and mangles domain names.  We apply a best-effort
+ * normalisation and then validate; if validation still fails the caller is
+ * asked to skip email (it is optional).
  *
- * into the proper format: uditi013@gmail.com
- *
- * Handles:
- * - "at" / " at " → @
- * - "dot" → .
+ * Handles common patterns:
+ * - "at" / "at the" / "@" → @
+ * - "dot" / "period" → .
  * - "underscore" / "under score" → _
  * - "dash" / "hyphen" → -
- * - "zero" → 0, "one" → 1, … "nine" → 9  (when surrounded by letters/digits)
- * - Removes stray spaces between characters
+ * - Spoken digits ("zero"–"nine") → numeral
+ * - Common domain mishearings (e.g. "g mail" → "gmail")
+ * - Strips stray filler words between username and domain
+ * - Collapses spaces inside the local-part and domain
  */
 function normaliseEmail(raw: string): string {
   let s = raw.trim().toLowerCase();
 
-  // Replace spoken words for special characters
+  // ── 1. Replace spoken punctuation ───────────────────────────────────────
   s = s.replace(/\bunderscore\b/g, "_");
-  s = s.replace(/\bunder score\b/g, "_");
+  s = s.replace(/\bunder\s+score\b/g, "_");
   s = s.replace(/\bdash\b/g, "-");
   s = s.replace(/\bhyphen\b/g, "-");
   s = s.replace(/\bdot\b/g, ".");
   s = s.replace(/\bperiod\b/g, ".");
 
-  // Spoken digits to numerals
+  // ── 2. Spoken digits → numerals ─────────────────────────────────────────
   const digitWords: Record<string, string> = {
     zero: "0", one: "1", two: "2", three: "3", four: "4",
     five: "5", six: "6", seven: "7", eight: "8", nine: "9",
@@ -92,20 +92,32 @@ function normaliseEmail(raw: string): string {
     s = s.replace(new RegExp(`\\b${word}\\b`, "g"), digit);
   }
 
-  // "at" → "@"  (must come after digit replacement to avoid "eight" → "8" then "at" confusion)
-  // Match " at " with surrounding spaces, or " at " at start/end
+  // ── 3. Normalise common domain mishearings before converting "@" ─────────
+  // "g mail" / "gmail" confusion — ASR sometimes adds a space
+  s = s.replace(/\bg\s+mail\b/g, "gmail");
+  // "hot mail" → "hotmail", "out look" → "outlook", "yahoo mail" → "yahoomail"
+  s = s.replace(/\bhot\s+mail\b/g, "hotmail");
+  s = s.replace(/\bout\s+look\b/g, "outlook");
+  s = s.replace(/\byahoo\s+mail\b/g, "yahoo");
+
+  // ── 4. Handle "at the <domain>" — filler word after "at" ────────────────
+  // "uditi at the gmail" → "uditi@gmail"
+  s = s.replace(/\s+at\s+the\s+/g, "@");
+  s = s.replace(/\s+at\s+a\s+/g, "@");
+  // Standard "at" with surrounding spaces
   s = s.replace(/\s+at\s+/g, "@");
-  // Edge case: "john at gmail.com" with no spaces captured above
-  // Also handle " at" at the very end before the domain if trimmed
+  // Bare "at" word boundary (catches anything remaining)
   s = s.replace(/\bat\b/g, "@");
 
-  // Remove spaces that snuck in between characters (e.g. "u d i t i" → "uditi")
-  // Only collapse spaces that are NOT surrounding "@"
-  // Strategy: collapse spaces in the local-part and domain separately
+  // ── 5. Collapse spaces inside each half ─────────────────────────────────
   if (s.includes("@")) {
     const atIdx = s.indexOf("@");
     const local = s.slice(0, atIdx).replace(/\s+/g, "");
-    const domain = s.slice(atIdx + 1).replace(/\s+/g, "");
+    // Remove any stray filler words that crept into the domain portion
+    let domain = s.slice(atIdx + 1).replace(/\b(the|a|an)\b/g, "").replace(/\s+/g, "");
+    // Ensure domain has a dot — if it ends in known TLDs without dot, insert it
+    // e.g. "gmailcom" → "gmail.com", "yahoocom" → "yahoo.com"
+    domain = domain.replace(/(gmail|yahoo|hotmail|outlook|icloud|proton|me)(com|net|org|co)$/, "$1.$2");
     s = `${local}@${domain}`;
   } else {
     s = s.replace(/\s+/g, "");
@@ -144,24 +156,25 @@ export async function POST(req: NextRequest) {
       return respond("I couldn't identify your organisation. Please try again.");
     }
     if (!customerName) {
-      return respond("Could you tell me your name so I can book the appointment?");
-    }
-    if (!customerEmail) {
-      return respond("What email address should I send your calendar invite to?");
+      return respond("Could you tell me your full name so I can book the appointment?");
     }
     if (!date || !time) {
       return respond("I need the date and time for the appointment. Could you confirm those?");
     }
     if (!purpose) {
-      return respond("What is the purpose of this appointment — for example, a consultation or checkup?");
+      return respond("What is this appointment for — for example, a consultation or a checkup?");
     }
 
+    // Email is optional — voice ASR is unreliable for email addresses.
+    // Validate if provided; if it looks wrong, book without it rather than
+    // blocking the whole booking on a bad transcript.
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(customerEmail)) {
-      return respond(
-        `I want to make sure I have the right email. I heard "${customerEmail}" — could you say it again slowly? ` +
-        `For example: "john, at, gmail, dot, com".`
-      );
+    const validatedEmail = customerEmail && emailRegex.test(customerEmail)
+      ? customerEmail
+      : null;
+
+    if (customerEmail && !validatedEmail) {
+      console.warn("[book-appointment] Could not parse email, booking without it:", customerEmail);
     }
 
     const [year, month, day] = date.split("-").map(Number);
@@ -282,7 +295,7 @@ export async function POST(req: NextRequest) {
     const eventSummary = `${purpose} — ${customerName}`;
     const eventDescription = [
       `Customer: ${customerName}`,
-      `Email: ${customerEmail}`,
+      validatedEmail ? `Email: ${validatedEmail}` : null,
       customerPhone ? `Phone: ${customerPhone}` : null,
       `Booked via ${orgName} AI assistant`,
     ].filter(Boolean).join("\n");
@@ -299,7 +312,7 @@ export async function POST(req: NextRequest) {
         slotStart.toISOString(),
         slotEnd.toISOString(),
         eventDescription,
-        [customerEmail],
+        validatedEmail ? [validatedEmail] : [],
         timezone
       );
       calendarEventId = event.id;
@@ -319,7 +332,7 @@ export async function POST(req: NextRequest) {
       start_at: actualStart,
       end_at: actualEnd,
       customer_name: customerName,
-      customer_email: customerEmail,
+      customer_email: validatedEmail ?? null,
       customer_phone: customerPhone ?? null,
     } as never);
 
@@ -334,9 +347,13 @@ export async function POST(req: NextRequest) {
       hour: "numeric", minute: "2-digit", hour12: true, timeZone: timezone,
     });
 
+    const emailLine = validatedEmail
+      ? `A calendar invite has been sent to ${validatedEmail}.`
+      : "No calendar invite was sent — we didn't catch a valid email address.";
+
     return respond(
       `You're all booked, ${customerName}! Your ${purpose} appointment is confirmed for ${friendlyDate} at ${friendlyTime}. ` +
-        `A Google Calendar invite has been sent to ${customerEmail}. Is there anything else I can help you with?`
+        `${emailLine} Is there anything else I can help you with?`
     );
   } catch (err) {
     console.error("[book-appointment] Unhandled error:", err);
