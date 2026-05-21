@@ -3,6 +3,48 @@
  * Tokens are stored per organisation in organisation_calendar_connections.
  */
 
+/**
+ * Convert a local date/time (expressed as year, 1-based month, day, hour, minute)
+ * in a given IANA timezone to a UTC Date object.
+ *
+ * Uses noon UTC on the same date to determine the timezone offset (avoids DST
+ * boundary issues at 2 AM). Handles half-hour offsets (e.g. IST UTC+5:30).
+ *
+ * Example — New York (UTC-4 in summer):
+ *   localToUTC(2026, 5, 21, 9, 0, "America/New_York") → 2026-05-21T13:00:00Z
+ */
+export function localToUTC(
+  year: number,
+  month1: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timezone: string
+): Date {
+  // Use noon UTC to probe the offset (noon is always on the same calendar day
+  // as the business hour being converted, safe across DST transitions at 2 AM)
+  const noonUTC = new Date(Date.UTC(year, month1 - 1, day, 12, 0, 0));
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(noonUTC);
+
+  const localNoonH = parseInt(parts.find((p) => p.type === "hour")?.value ?? "12", 10) % 24;
+  const localNoonM = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+
+  // UTC offset in minutes: positive = east of UTC, negative = west
+  // At noon UTC, local time is localNoonH:localNoonM
+  // tzOffset = UTC - local = 12*60 - localNoon (in minutes)
+  const tzOffsetMinutes = 12 * 60 - (localNoonH * 60 + localNoonM);
+
+  // Target UTC time = local time + tzOffset
+  const targetUTCMinutes = hour * 60 + minute + tzOffsetMinutes;
+  const baseDayUTC = Date.UTC(year, month1 - 1, day, 0, 0, 0);
+  return new Date(baseDayUTC + targetUTCMinutes * 60_000);
+}
+
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_CALENDAR_FREEBUSY = "https://www.googleapis.com/calendar/v3/freeBusy";
 const GOOGLE_CALENDAR_EVENTS = (calendarId: string) =>
