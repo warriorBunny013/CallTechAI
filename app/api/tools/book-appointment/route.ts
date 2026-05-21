@@ -135,20 +135,15 @@ export async function POST(req: NextRequest) {
     }
 
     const rawConn = calConn as Record<string, unknown>;
-    const availability = rawConn.availability_settings as {
-      days: string[];
-      startHour: number;
-      endHour: number;
-      appointmentDuration: number;
-      bufferTime: number;
-    } | null;
+    const storedSettings = rawConn.availability_settings as Record<string, unknown> | null | undefined;
 
-    const avail = availability ?? {
-      days: ["Mon", "Tue", "Wed", "Thu", "Fri"],
-      startHour: 9,
-      endHour: 17,
-      appointmentDuration: 30,
-      bufferTime: 15,
+    // Per-field fallbacks so missing fields don't cause NaN arithmetic
+    const avail = {
+      days: Array.isArray(storedSettings?.days) ? (storedSettings!.days as string[]) : ["Mon", "Tue", "Wed", "Thu", "Fri"],
+      startHour: typeof storedSettings?.startHour === "number" ? storedSettings.startHour : 9,
+      endHour: typeof storedSettings?.endHour === "number" ? storedSettings.endHour : 17,
+      appointmentDuration: typeof storedSettings?.appointmentDuration === "number" ? storedSettings.appointmentDuration : 30,
+      bufferTime: typeof storedSettings?.bufferTime === "number" ? storedSettings.bufferTime : 0,
     };
 
     const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
