@@ -41,6 +41,42 @@ function respond(result: string) {
   return NextResponse.json({ result }, { status: 200 });
 }
 
+/**
+ * Normalise a date string from the LLM into YYYY-MM-DD.
+ * The LLM may send: "2026-05-22", "05/22/2026", "May 22, 2026", etc.
+ * Returns null if we can't parse it.
+ */
+function normaliseDateString(raw: string): string | null {
+  const s = raw.trim();
+
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // MM/DD/YYYY or MM-DD-YYYY
+  const mdy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (mdy) {
+    const [, m, d, y] = mdy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  // DD/MM/YYYY (less common but possible)
+  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+
+  // Try native Date.parse for things like "May 22, 2026" or "22 May 2026"
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    // Use UTC to avoid timezone shift turning it into the previous day
+    const utc = new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+    return utc.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
 export async function GET() {
   return NextResponse.json({ ok: true, endpoint: "check-availability (ElevenLabs)" });
 }
@@ -56,7 +92,7 @@ export async function POST(req: NextRequest) {
   const orgId = (body.org_id as string | undefined) ?? null;
   const dateArg = (body.date as string | undefined) ?? null;
 
-  console.log("[check-availability] Request:", { orgId, date: dateArg });
+  console.log("[check-availability] Request:", { orgId, rawDate: dateArg });
 
   if (!orgId) {
     return respond("I'm unable to identify your organisation. Please try again.");
@@ -64,43 +100,57 @@ export async function POST(req: NextRequest) {
 
   const supabase = getSupabaseService();
 
-  // Default to today if no date given
-  const targetDate =
-    typeof dateArg === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateArg)
-      ? dateArg
-      : new Date().toISOString().slice(0, 10);
+  // Parse & normalise date — fall back to today in the configured timezone
+  const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
+  const todayISO = new Date().toLocaleDateString("en-CA", { timeZone: timezone }); // YYYY-MM-DD in local tz
+
+  let targetDate: string;
+  if (dateArg) {
+    const normalised = normaliseDateString(dateArg);
+    if (normalised) {
+      targetDate = normalised;
+    } else {
+      console.warn("[check-availability] Could not parse date:", dateArg, "— falling back to today");
+      targetDate = todayISO;
+    }
+  } else {
+    targetDate = todayISO;
+  }
+
+  console.log("[check-availability] Resolved date:", targetDate, "timezone:", timezone);
 
   const [year, month, day] = targetDate.split("-").map(Number);
   const dateObj = new Date(Date.UTC(year, month - 1, day));
   const dayName = DAY_NAMES[dateObj.getUTCDay()];
 
   // Fetch calendar connection + availability settings
-  const { data: calConn } = await supabase
+  const { data: calConn, error: connErr } = await supabase
     .from("organisation_calendar_connections")
     .select("access_token, refresh_token, token_expiry, calendar_id, availability_settings")
     .eq("organisation_id", orgId)
     .maybeSingle();
+
+  if (connErr) {
+    console.error("[check-availability] DB error:", connErr);
+  }
 
   if (!calConn) {
     return respond("Appointment booking isn't set up yet. Please call back later.");
   }
 
   const rawConn = calConn as Record<string, unknown>;
-  const availability = rawConn.availability_settings as {
-    days: string[];
-    startHour: number;
-    endHour: number;
-    appointmentDuration: number;
-    bufferTime: number;
-  } | null;
+  const storedSettings = rawConn.availability_settings as Record<string, unknown> | null | undefined;
 
-  const avail = availability ?? {
-    days: ["Mon", "Tue", "Wed", "Thu", "Fri"],
-    startHour: 9,
-    endHour: 17,
-    appointmentDuration: 30,
-    bufferTime: 15,
+  // Build avail with per-field fallbacks so missing fields don't cause NaN math
+  const avail = {
+    days: Array.isArray(storedSettings?.days) ? (storedSettings!.days as string[]) : ["Mon", "Tue", "Wed", "Thu", "Fri"],
+    startHour: typeof storedSettings?.startHour === "number" ? storedSettings.startHour : 9,
+    endHour: typeof storedSettings?.endHour === "number" ? storedSettings.endHour : 17,
+    appointmentDuration: typeof storedSettings?.appointmentDuration === "number" ? storedSettings.appointmentDuration : 30,
+    bufferTime: typeof storedSettings?.bufferTime === "number" ? storedSettings.bufferTime : 0,
   };
+
+  console.log("[check-availability] Availability settings:", avail, "dayName:", dayName);
 
   if (!avail.days.includes(dayName)) {
     return respond(
@@ -108,10 +158,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
   // Convert availability hours from local (business owner's timezone) to UTC
   const dayStart = localToUTC(year, month, day, avail.startHour, 0, timezone);
   const dayEnd   = localToUTC(year, month, day, avail.endHour, 0, timezone);
+
+  console.log("[check-availability] Window UTC:", dayStart.toISOString(), "→", dayEnd.toISOString());
 
   // Query Google Calendar free/busy
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -137,21 +188,33 @@ export async function POST(req: NextRequest) {
       if (accessToken) {
         const freebusy = await queryFreeBusy(accessToken, calendarId, dayStart.toISOString(), dayEnd.toISOString());
         busySlots = freebusy.busy;
+        console.log("[check-availability] Busy slots from calendar:", busySlots.length);
       }
     } catch (e) {
-      console.error("[check-availability] Calendar query failed:", e);
+      console.error("[check-availability] Calendar query failed (showing all slots):", e);
+      // Calendar query failed — still show slots based on availability settings alone
     }
   }
 
   // Build available slots
-  const slotStep = avail.appointmentDuration + avail.bufferTime;
+  // Ensure slotStep is always a positive integer to prevent infinite loops or NaN math
+  const duration = Math.max(1, avail.appointmentDuration);
+  const slotStep = duration + Math.max(0, avail.bufferTime);
+
+  // Only filter out past slots when checking TODAY — future dates always show full day
+  const isToday = targetDate === todayISO;
   const now = new Date();
+
   const availableSlots: string[] = [];
   let cursor = new Date(dayStart);
 
-  while (addMinutes(cursor, avail.appointmentDuration) <= dayEnd) {
-    const slotEnd = addMinutes(cursor, avail.appointmentDuration);
-    if (slotEnd > now) {
+  while (addMinutes(cursor, duration) <= dayEnd) {
+    const slotEnd = addMinutes(cursor, duration);
+
+    // Skip slots already in the past — only applies to today
+    const isPast = isToday && slotEnd <= now;
+
+    if (!isPast) {
       const isBusy = busySlots.some(
         (b) => cursor < new Date(b.end) && slotEnd > new Date(b.start)
       );
@@ -162,18 +225,30 @@ export async function POST(req: NextRequest) {
     cursor = addMinutes(cursor, slotStep);
   }
 
+  console.log("[check-availability] Available slots:", availableSlots.length, "isToday:", isToday);
+
   const friendlyDate = dateObj.toLocaleDateString("en-US", {
     weekday: "long", month: "long", day: "numeric", timeZone: "UTC",
   });
 
   if (availableSlots.length === 0) {
+    if (busySlots.length > 0) {
+      return respond(
+        `There are no available slots on ${friendlyDate} — the calendar is fully booked. Would you like to check another date?`
+      );
+    }
+    if (isToday) {
+      return respond(
+        `There are no more available slots today. Would you like to check tomorrow or another date?`
+      );
+    }
     return respond(
       `There are no available slots on ${friendlyDate}. Would you like to check another date?`
     );
   }
 
-  const slotList = availableSlots.slice(0, 6).join(", ");
+  const slotList = availableSlots.slice(0, 8).join(", ");
   return respond(
-    `On ${friendlyDate}, available ${avail.appointmentDuration}-minute slots are: ${slotList}. Which time works best for you?`
+    `On ${friendlyDate}, available ${duration}-minute slots are: ${slotList}. Which time works best for you?`
   );
 }

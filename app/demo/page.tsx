@@ -12,8 +12,6 @@ interface AssistantInfo {
 
 export default function DemoPage() {
   const [isLoading, setIsLoading] = useState(true)
-  const [orgId, setOrgId] = useState<string | null>(null)
-  const [orgName, setOrgName] = useState<string>("Your Business")
   const [assistant, setAssistant] = useState<AssistantInfo | null>(null)
   const [intentsCount, setIntentsCount] = useState(0)
   const [calendarConnected, setCalendarConnected] = useState(false)
@@ -27,19 +25,12 @@ export default function DemoPage() {
   useEffect(() => {
     async function load() {
       try {
-        // Load org info, assistants, intents, calendar status in parallel
-        const [orgRes, assistantsRes, intentsRes, calRes] = await Promise.all([
-          fetch("/api/organisation"),
+        // Load assistants, intents, calendar status in parallel
+        const [assistantsRes, intentsRes, calRes] = await Promise.all([
           fetch("/api/assistants/list"),
           fetch("/api/intents"),
           fetch("/api/calendar/status"),
         ])
-
-        if (orgRes.ok) {
-          const d = await orgRes.json()
-          setOrgId(d?.organisation?.id ?? null)
-          setOrgName(d?.organisation?.name ?? "Your Business")
-        }
 
         if (assistantsRes.ok) {
           const d = await assistantsRes.json()
@@ -68,23 +59,9 @@ export default function DemoPage() {
   const agentReady = !!assistant?.elevenlabsAgentId
   const intentsOk = intentsCount > 0
 
-  // Dynamic variables injected into every demo session so booking tools know which org to use
-  const dynamicVariables = orgId
-    ? { org_id: orgId, org_name: orgName }
-    : undefined
-
-  // System-prompt addition so the LLM always sends org_id in tool calls
-  const overrides = orgId
-    ? {
-        agent: {
-          prompt: {
-            prompt:
-              `\n\n## Tool Calls\nYour organisation ID is "${orgId}". ` +
-              `Always include "org_id": "${orgId}" in every tool call you make.`,
-          },
-        },
-      }
-    : undefined
+  // The org_id is already baked into the agent's tool descriptions via buildAppointmentSchedulerPrompt.
+  // Do NOT use overrides here — overrides.agent.prompt.prompt REPLACES the full system prompt,
+  // which would break the agent's instructions. The agent already knows its org_id.
 
   if (isLoading) {
     return (
@@ -214,8 +191,6 @@ export default function DemoPage() {
             <div className="p-6 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10">
               <ElevenLabsWidget
                 agentId={assistant!.elevenlabsAgentId}
-                dynamicVariables={dynamicVariables}
-                overrides={overrides}
                 onTranscriptUpdate={setLiveTranscript}
                 onConnectionChange={(c) => !c && setLiveTranscript([])}
                 inline
