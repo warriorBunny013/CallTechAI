@@ -41,35 +41,66 @@ function respond(result: string) {
   return NextResponse.json({ result }, { status: 200 });
 }
 
+/** Add N calendar days to a YYYY-MM-DD string, returning a new YYYY-MM-DD string. */
+function addDays(isoDate: string, n: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
 /**
- * Normalise a date string from the LLM into YYYY-MM-DD.
- * The LLM may send: "2026-05-22", "05/22/2026", "May 22, 2026", etc.
+ * Normalise a date string (or natural-language keyword) into YYYY-MM-DD.
+ * The LLM may send:
+ *   - "today" / "tomorrow" / "day after tomorrow"
+ *   - "next Monday" / "this Friday"
+ *   - "2026-05-22", "05/22/2026", "May 22, 2026", etc.
  * Returns null if we can't parse it.
  */
-function normaliseDateString(raw: string): string | null {
-  const s = raw.trim();
+function normaliseDateString(raw: string, timezone: string): string | null {
+  const s = raw.trim().toLowerCase();
+  const todayISO = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+
+  // Natural-language keywords
+  if (s === "today") return todayISO;
+  if (s === "tomorrow") return addDays(todayISO, 1);
+  if (s === "day after tomorrow" || s === "day after") return addDays(todayISO, 2);
+
+  // "next <weekday>" or "this <weekday>"
+  const DAY_MAP: Record<string, number> = {
+    sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+    thursday: 4, friday: 5, saturday: 6,
+  };
+  const weekdayMatch = s.match(/(?:next|this)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/);
+  if (weekdayMatch) {
+    const targetDow = DAY_MAP[weekdayMatch[1]];
+    const [ty, tm, td] = todayISO.split("-").map(Number);
+    const todayDow = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
+    let diff = targetDow - todayDow;
+    if (diff <= 0) diff += 7; // always forward
+    return addDays(todayISO, diff);
+  }
 
   // Already YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const uppered = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(uppered)) return uppered;
 
   // MM/DD/YYYY or MM-DD-YYYY
-  const mdy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  const mdy = uppered.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (mdy) {
     const [, m, d, y] = mdy;
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
 
-  // DD/MM/YYYY (less common but possible)
-  const dmy = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  // DD.MM.YYYY
+  const dmy = uppered.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
   if (dmy) {
     const [, d, m, y] = dmy;
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
   }
 
-  // Try native Date.parse for things like "May 22, 2026" or "22 May 2026"
-  const parsed = new Date(s);
+  // Try native Date.parse for "May 22, 2026" or "22 May 2026"
+  const parsed = new Date(uppered);
   if (!isNaN(parsed.getTime())) {
-    // Use UTC to avoid timezone shift turning it into the previous day
     const utc = new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
     return utc.toISOString().slice(0, 10);
   }
@@ -103,10 +134,11 @@ export async function POST(req: NextRequest) {
   // Parse & normalise date — fall back to today in the configured timezone
   const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
   const todayISO = new Date().toLocaleDateString("en-CA", { timeZone: timezone }); // YYYY-MM-DD in local tz
+  const nowLocal = new Date(); // used for past-slot filtering
 
   let targetDate: string;
   if (dateArg) {
-    const normalised = normaliseDateString(dateArg);
+    const normalised = normaliseDateString(dateArg, timezone);
     if (normalised) {
       targetDate = normalised;
     } else {
@@ -203,7 +235,6 @@ export async function POST(req: NextRequest) {
 
   // Only filter out past slots when checking TODAY — future dates always show full day
   const isToday = targetDate === todayISO;
-  const now = new Date();
 
   const availableSlots: string[] = [];
   let cursor = new Date(dayStart);
@@ -212,7 +243,7 @@ export async function POST(req: NextRequest) {
     const slotEnd = addMinutes(cursor, duration);
 
     // Skip slots already in the past — only applies to today
-    const isPast = isToday && slotEnd <= now;
+    const isPast = isToday && slotEnd <= nowLocal;
 
     if (!isPast) {
       const isBusy = busySlots.some(

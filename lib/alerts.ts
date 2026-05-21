@@ -56,16 +56,26 @@ export async function dispatchAlerts(
   config: AlertConfig,
   event: AlertEvent,
   message: string
-): Promise<void> {
-  if (event === "new_call" && !config.alert_on_new_call) return;
-  if (event === "new_booking" && !config.alert_on_new_booking) return;
-
-  if (!config.telegram_enabled || !config.telegram_chat_id) return;
+): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  if (event === "new_call" && !config.alert_on_new_call) {
+    return { ok: true, skipped: "alert_on_new_call is off" };
+  }
+  if (event === "new_booking" && !config.alert_on_new_booking) {
+    return { ok: true, skipped: "alert_on_new_booking is off" };
+  }
+  if (!config.telegram_enabled) {
+    return { ok: true, skipped: "telegram_enabled is false" };
+  }
+  if (!config.telegram_chat_id) {
+    return { ok: false, error: "No telegram_chat_id configured" };
+  }
 
   const result = await sendTelegramAlert(null, config.telegram_chat_id, message);
   if (!result.ok) {
     console.error("[alerts] Telegram dispatch failed:", result.error);
+    return { ok: false, error: result.error };
   }
+  return { ok: true };
 }
 
 // ── Message builders ──────────────────────────────────────────────────────────
