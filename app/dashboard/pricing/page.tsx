@@ -13,114 +13,21 @@ import {
 } from "lucide-react"
 import { useSubscription } from "@/hooks/use-subscription"
 import { useUsage } from "@/hooks/use-usage"
-
-/* ─── Plan definitions ──────────────────────────────────────────────────── */
-const PLANS = [
-  {
-    id: "starter",
-    label: "Starter Package",
-    badge: "SOLO",
-    badgeColor: "bg-white/10 text-white/60 dark:bg-white/10 dark:text-white/60 bg-gray-100 text-gray-500",
-    accentColor: "text-[#84CC16]",
-    highlight: false,
-    monthlyPrice: 99,
-    minutesIncluded: 250,
-    callRange: "60–120 calls/month",
-    tagline: "Freelancers · solo trades · consultants",
-    features: [
-      "1 AI receptionist number",
-      "1 voice persona",
-      "1 language (English)",
-      "Telegram alerts",
-      "Google Calendar sync",
-      "Call recordings + AI summaries",
-      "Analytics dashboard",
-      "Custom intents",
-      "Email support",
-    ],
-    checkColor: "text-[#84CC16]",
-  },
-  {
-    id: "growth",
-    label: "Growth Package",
-    badge: "MOST POPULAR",
-    badgeColor: "bg-[#84CC16]/15 text-[#84CC16]",
-    accentColor: "text-[#84CC16]",
-    highlight: true,
-    monthlyPrice: 249,
-    minutesIncluded: 500,
-    callRange: "~150–250 calls/month",
-    tagline: "Salons · clinics · agencies · SMBs",
-    features: [
-      "3 AI receptionist numbers",
-      "3 voice personas",
-      "English + Russian",
-      "Telegram alerts",
-      "Google Calendar sync",
-      "Call recordings + AI summaries",
-      "Advanced analytics + trends",
-      "Unlimited custom intents",
-      "Priority chat support",
-    ],
-    checkColor: "text-[#84CC16]",
-  },
-  {
-    id: "pro",
-    label: "Pro Package",
-    badge: "BUSINESS+",
-    badgeColor: "bg-purple-500/15 text-purple-400",
-    accentColor: "text-purple-400",
-    highlight: false,
-    monthlyPrice: 599,
-    minutesIncluded: 1000,
-    callRange: "300–500 calls/month",
-    tagline: "Multi-location · high-volume · restaurants",
-    features: [
-      "10 AI receptionist numbers",
-      "10 voice personas",
-      "All languages supported",
-      "Telegram alerts",
-      "Google Calendar sync",
-      "Call recordings + AI summaries",
-      "Full analytics suite",
-      "Unlimited custom intents",
-      "Priority phone + chat support",
-    ],
-    checkColor: "text-purple-400",
-  },
-]
+import {
+  PRICING_PLANS,
+  getPlanLabel,
+  getPlanMinutes,
+  normalizePlanId,
+  type PlanId,
+} from "@/lib/pricing-plans"
 
 const TRIAL_MINUTES = 40
 
-/* ─── Helpers ────────────────────────────────────────────────────────────── */
-function getPlanLabel(planType: string | null | undefined, isTrial: boolean): string {
-  if (isTrial) return "7-day Free Trial"
-  if (!planType) return "No Active Plan"
-  const map: Record<string, string> = {
-    trial: "7-day Free Trial",
-    starter: "Starter Package",
-    growth: "Growth Package",
-    pro: "Pro Package",
-    basic: "Starter Package",
-  }
-  return map[planType.toLowerCase()] ?? planType
-}
-
-function getPlanMinutes(planType: string | null | undefined): number {
-  if (!planType) return 0
-  const map: Record<string, number> = {
-    starter: 250,
-    growth: 500,
-    pro: 1000,
-    basic: 250,
-  }
-  return map[planType.toLowerCase()] ?? 250
-}
-
 function getUpgradeSuggestion(planType: string | null | undefined, isTrial: boolean) {
-  if (isTrial || !planType || planType.toLowerCase() === "trial") return PLANS[0]
-  if (planType.toLowerCase() === "starter" || planType.toLowerCase() === "basic") return PLANS[1]
-  if (planType.toLowerCase() === "growth") return PLANS[2]
+  const id = normalizePlanId(planType)
+  if (isTrial || !id) return PRICING_PLANS[0]
+  if (id === "starter") return PRICING_PLANS[1]
+  if (id === "growth") return PRICING_PLANS[2]
   return null
 }
 
@@ -174,13 +81,16 @@ function UsageBar({ used, total, isTrial }: { used: number; total: number; isTri
 function useCheckout() {
   const [loading, setLoading] = useState(false)
 
-  const startCheckout = async (billingCycle: "monthly" | "yearly" = "monthly") => {
+  const startCheckout = async (
+    billingCycle: "monthly" | "yearly" = "monthly",
+    plan: PlanId = "starter"
+  ) => {
     try {
       setLoading(true)
       const res = await fetch("/api/create-checkout-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ billingCycle }),
+        body: JSON.stringify({ billingCycle, plan }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to create checkout session")
@@ -379,7 +289,7 @@ function PricingContent() {
                   </div>
                   <div className="flex flex-col gap-2.5 justify-center">
                     <Button
-                      onClick={() => startCheckout("monthly")}
+                      onClick={() => startCheckout("monthly", nextPlan.id)}
                       disabled={checkoutLoading}
                       className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-bold h-11 rounded-xl shadow-lg shadow-[#84CC16]/25 hover:shadow-[#84CC16]/40 transition-all"
                     >
@@ -390,7 +300,7 @@ function PricingContent() {
                       )}
                     </Button>
                     <Button
-                      onClick={() => startCheckout("yearly")}
+                      onClick={() => startCheckout("yearly", nextPlan.id)}
                       disabled={checkoutLoading}
                       variant="outline"
                       className="border-[#84CC16]/40 text-[#84CC16] hover:bg-[#84CC16]/10 font-semibold h-10 rounded-xl transition-all"
@@ -407,10 +317,8 @@ function PricingContent() {
           <div>
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">All plans</h2>
             <div className="grid md:grid-cols-3 gap-4">
-              {PLANS.map((plan) => {
-                const isCurrent = !isTrial && planType &&
-                  (planType.toLowerCase() === plan.id ||
-                   (planType.toLowerCase() === "basic" && plan.id === "starter"))
+              {PRICING_PLANS.map((plan) => {
+                const isCurrent = !isTrial && normalizePlanId(planType) === plan.id
                 return (
                   <div
                     key={plan.id}
@@ -466,7 +374,7 @@ function PricingContent() {
                       </div>
                     ) : (
                       <Button
-                        onClick={() => startCheckout("monthly")}
+                        onClick={() => startCheckout("monthly", plan.id)}
                         disabled={checkoutLoading || subLoading}
                         size="sm"
                         className={`h-9 rounded-xl font-semibold text-xs ${

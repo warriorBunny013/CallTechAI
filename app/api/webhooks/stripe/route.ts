@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
+import { planIdFromPriceId } from "@/lib/stripe";
+import { normalizePlanId } from "@/lib/pricing-plans";
 import { getSupabaseService } from "@/lib/supabase/service";
 import { getOrganisationIdForUser } from "@/lib/org";
 import Stripe from "stripe";
@@ -118,7 +120,7 @@ async function handleCheckoutSessionCompleted(
             stripe_customer_id: session.customer as string,
             stripe_subscription_id: subscription.id,
             status: subscription.status,
-            plan_type: plan || "basic",
+            plan_type: normalizePlanId(plan) ?? "starter",
             billing_cycle:
               billingCycle === "year"
                 ? "yearly"
@@ -186,6 +188,9 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
       ? new Date((subscription as any).current_period_end * 1000)
       : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+    const priceId = subscription.items.data[0]?.price?.id;
+    const planType = priceId ? planIdFromPriceId(priceId) : null;
+
     const supabase = getSupabaseService();
     const { data, error } = await supabase
       .from("subscriptions")
@@ -196,7 +201,7 @@ async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
           stripe_customer_id: subscription.customer as string,
           stripe_subscription_id: subscription.id,
           status: subscription.status,
-          plan_type: "basic",
+          plan_type: planType ?? "starter",
           billing_cycle: (() => {
             const i =
               subscription.items.data[0]?.price?.recurring?.interval || "month";

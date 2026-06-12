@@ -18,11 +18,12 @@ import {
 import { Badge } from "@/components/ui/badge"
 import {
   Bot, Calendar, Car, CheckCircle2, ChevronLeft, ChevronRight, HeartPulse,
-  Loader2, Mic, Pencil, Play, Plus, Square, Trash2, Sparkles, MessageSquare,
+  Loader2, Link2, Mic, Pencil, Play, Plus, Square, Trash2, Sparkles, MessageSquare,
   Volume2, X, Save, Utensils,
 } from "lucide-react"
 import { formatLanguagesLabel, getVoicePreviewSource } from "@/lib/voice-library"
 import { CreateAssistantWizard } from "@/components/dashboard/create-assistant-wizard"
+import { LinkExistingAgentForm } from "@/components/dashboard/link-existing-agent-form"
 import { LanguageMultiSelect } from "@/components/dashboard/language-multi-select"
 
 const VOICE_LABELS_KEY = "calltech_voice_display_names"
@@ -69,7 +70,7 @@ type AssistantListItem = {
   firstMessage?: string | null
   isDefault: boolean
 }
-type PageView = "list" | "create" | "edit"
+type PageView = "list" | "create" | "link" | "edit"
 
 const GENDER_COLORS: Record<string, string> = {
   female: "bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-400",
@@ -320,6 +321,7 @@ export default function AssistantsPage() {
   const [templates, setTemplates] = useState<AssistantTemplateMeta[]>([])
   const [voiceLabels, setVoiceLabels] = useState<Record<string, string>>({})
   const [creating, setCreating] = useState(false)
+  const [linking, setLinking] = useState(false)
 
   const [voices, setVoices] = useState<VoiceOption[]>([])
   const [voicesLoading, setVoicesLoading] = useState(true)
@@ -401,9 +403,6 @@ export default function AssistantsPage() {
       if (res.ok) {
         const data = await res.json()
         setAssistants(data.assistants ?? [])
-        if ((data.assistants ?? []).length === 0) {
-          setPageView("create")
-        }
       }
     } catch (e) {
       console.error(e)
@@ -412,8 +411,10 @@ export default function AssistantsPage() {
     }
   }
 
-  const templateName = (templateId: string | null | undefined) =>
-    templates.find((t) => t.id === templateId)?.name ?? "Custom"
+  const templateName = (templateId: string | null | undefined) => {
+    if (templateId === "linked-external") return "Linked from ElevenLabs"
+    return templates.find((t) => t.id === templateId)?.name ?? "Custom"
+  }
 
   const voiceName = (voiceId: string | null | undefined) =>
     voices.find((v) => v.id === voiceId)?.name ?? voiceLabels[voiceId ?? ""] ?? "—"
@@ -528,6 +529,38 @@ export default function AssistantsPage() {
     } finally { setDeleting(false) }
   }
 
+  const handleLinkExistingAgent = async (payload: {
+    elevenlabsAgentId: string
+    name: string
+  }) => {
+    try {
+      setLinking(true)
+      const res = await fetch("/api/assistants/link-existing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Failed to link agent")
+      await fetchAssistants()
+      setPageView("list")
+      toast({
+        title: data.alreadyLinked ? "Already linked" : "Agent linked!",
+        description:
+          data.message ??
+          "Assign a phone number under Phone Numbers to track usage.",
+      })
+    } catch (e: unknown) {
+      toast({
+        title: "Could not link agent",
+        description: e instanceof Error ? e.message : "Failed to link agent.",
+        variant: "destructive",
+      })
+    } finally {
+      setLinking(false)
+    }
+  }
+
   const handleCreateAssistant = async (payload: {
     name: string
     voiceId: string
@@ -603,9 +636,11 @@ export default function AssistantsPage() {
               <p className="text-base md:text-lg text-gray-600 dark:text-gray-400 max-w-2xl">
                 {pageView === "create"
                   ? "Add a new assistant — pick a template, voice, and prompts."
-                  : pageView === "edit"
-                    ? "Update name, languages, voice, first message, and system prompt, then save."
-                    : "Manage voice assistants for your organisation. The primary assistant handles inbound calls by default."}
+                  : pageView === "link"
+                    ? "Connect an agent you already built in ElevenLabs for usage tracking."
+                    : pageView === "edit"
+                      ? "Update name, languages, voice, first message, and system prompt, then save."
+                      : "Manage voice assistants for your organisation. The primary assistant handles inbound calls by default."}
               </p>
             </div>
 
@@ -619,7 +654,7 @@ export default function AssistantsPage() {
                 Back to list
               </Button>
             )}
-            {pageView === "create" && assistants.length > 0 && (
+            {(pageView === "create" || pageView === "link") && assistants.length > 0 && (
               <Button
                 variant="outline"
                 onClick={() => setPageView("list")}
@@ -650,6 +685,17 @@ export default function AssistantsPage() {
                   >
                     {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
                     Sync prompts
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setPageView("link")
+                      window.scrollTo({ top: 0, behavior: "smooth" })
+                    }}
+                    className="h-11 px-4 rounded-xl text-sm font-semibold shrink-0"
+                  >
+                    <Link2 className="h-4 w-4 mr-2" />
+                    Link existing
                   </Button>
                   <Button
                     onClick={() => {
@@ -692,6 +738,11 @@ export default function AssistantsPage() {
                             )}
                           </div>
                           <p className="text-xs text-gray-500 mt-0.5">{templateName(assistant.templateId)}</p>
+                          {assistant.templateId === "linked-external" && (
+                            <p className="text-[10px] font-mono text-gray-400 mt-1 truncate" title={assistant.elevenlabsAgentId}>
+                              {assistant.elevenlabsAgentId}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
@@ -705,15 +756,21 @@ export default function AssistantsPage() {
                         </p>
                       </div>
                       <div className="flex items-center gap-2 mt-auto pt-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openEdit(assistant)}
-                          className="rounded-lg font-semibold flex-1"
-                        >
-                          <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                          Edit
-                        </Button>
+                        {assistant.templateId !== "linked-external" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openEdit(assistant)}
+                            className="rounded-lg font-semibold flex-1"
+                          >
+                            <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                            Edit
+                          </Button>
+                        ) : (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 flex-1 px-1">
+                            Managed in ElevenLabs · assign under Phone Numbers
+                          </p>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"
@@ -744,6 +801,52 @@ export default function AssistantsPage() {
                 </div>
               )}
             </div>
+          )}
+
+          {pageView === "list" && assistants.length === 0 && (
+            <div className="max-w-lg mx-auto p-8 rounded-2xl bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 text-center space-y-6">
+              <div className="p-4 rounded-2xl bg-[#84CC16]/10 inline-flex">
+                <Bot className="h-10 w-10 text-[#84CC16]" />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">No assistants yet</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Link an agent you already use in ElevenLabs (e.g. 360 Tint Gateway), or create a new one.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button
+                  onClick={() => setPageView("link")}
+                  className="bg-[#84CC16] hover:bg-[#65A30D] text-black font-bold rounded-xl h-11"
+                >
+                  <Link2 className="h-4 w-4 mr-2" />
+                  Link existing agent
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setWizardKey((k) => k + 1)
+                    setPageView("create")
+                  }}
+                  className="rounded-xl h-11 font-semibold"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create new
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {pageView === "link" && (
+            <LinkExistingAgentForm
+              linking={linking}
+              onLink={handleLinkExistingAgent}
+              onCancel={
+                assistants.length > 0
+                  ? () => setPageView("list")
+                  : () => setPageView("list")
+              }
+            />
           )}
 
           {/* ─── INLINE EDIT FORM ─── */}
@@ -880,8 +983,8 @@ export default function AssistantsPage() {
             </div>
           )}
 
-          {/* ─── CREATE WIZARD (no assistant yet) ─── */}
-          {(pageView === "create" || assistants.length === 0) && (
+          {/* ─── CREATE WIZARD ─── */}
+          {pageView === "create" && (
             <>
               <CreateAssistantWizard
                 key={wizardKey}
@@ -932,7 +1035,15 @@ export default function AssistantsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-bold">Delete assistant?</AlertDialogTitle>
             <AlertDialogDescription className="text-gray-600 dark:text-gray-400">
-              This will permanently delete <span className="font-semibold text-gray-900 dark:text-white">{deletingAssistant?.name}</span> from ElevenLabs. You can create a new assistant anytime.
+              {deletingAssistant?.templateId === "linked-external" ? (
+                <>
+                  This will unlink <span className="font-semibold text-gray-900 dark:text-white">{deletingAssistant?.name}</span> from your dashboard. The agent in ElevenLabs will not be deleted.
+                </>
+              ) : (
+                <>
+                  This will permanently delete <span className="font-semibold text-gray-900 dark:text-white">{deletingAssistant?.name}</span> from ElevenLabs. You can create a new assistant anytime.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

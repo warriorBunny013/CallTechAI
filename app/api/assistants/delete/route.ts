@@ -21,11 +21,12 @@ export async function DELETE(req: NextRequest) {
 
     let elevenLabsAgentId: string | null = null;
     let wasDefault = false;
+    let isLinkedExternal = false;
 
     if (assistantRowId) {
       const { data: row, error } = await supabase
         .from("organisation_assistants")
-        .select("id, elevenlabs_agent_id, is_default")
+        .select("id, elevenlabs_agent_id, is_default, template_id")
         .eq("id", assistantRowId)
         .eq("organisation_id", orgId)
         .maybeSingle();
@@ -33,7 +34,7 @@ export async function DELETE(req: NextRequest) {
       if (error || !row) {
         const { data: byElId } = await supabase
           .from("organisation_assistants")
-          .select("id, elevenlabs_agent_id, is_default")
+          .select("id, elevenlabs_agent_id, is_default, template_id")
           .eq("organisation_id", orgId)
           .eq("elevenlabs_agent_id", assistantRowId)
           .maybeSingle();
@@ -44,6 +45,8 @@ export async function DELETE(req: NextRequest) {
 
         elevenLabsAgentId = (byElId as { elevenlabs_agent_id: string }).elevenlabs_agent_id;
         wasDefault = Boolean((byElId as { is_default?: boolean }).is_default);
+        isLinkedExternal =
+          (byElId as { template_id?: string }).template_id === "linked-external";
         await supabase
           .from("organisation_assistants")
           .delete()
@@ -51,6 +54,8 @@ export async function DELETE(req: NextRequest) {
       } else {
         elevenLabsAgentId = (row as { elevenlabs_agent_id: string }).elevenlabs_agent_id;
         wasDefault = Boolean((row as { is_default?: boolean }).is_default);
+        isLinkedExternal =
+          (row as { template_id?: string }).template_id === "linked-external";
         await supabase.from("organisation_assistants").delete().eq("id", assistantRowId);
       }
     } else {
@@ -75,7 +80,7 @@ export async function DELETE(req: NextRequest) {
         .eq("elevenlabs_agent_id", elevenLabsAgentId);
     }
 
-    if (elevenLabsAgentId) {
+    if (elevenLabsAgentId && !isLinkedExternal) {
       try {
         await deleteElevenLabsAgent(elevenLabsAgentId);
       } catch (e) {

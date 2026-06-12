@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe-server";
 import { getSupabaseService } from "@/lib/supabase/service";
 import { getCurrentUserAndOrg } from "@/lib/org";
+import { normalizePlanId } from "@/lib/pricing-plans";
 
 export async function POST(req: NextRequest) {
   try {
@@ -76,6 +77,9 @@ export async function POST(req: NextRequest) {
       const billingCycle =
         rawCycle === "year" ? "yearly" : rawCycle === "month" ? "monthly" : rawCycle;
 
+      const planType =
+        normalizePlanId(session.metadata?.plan as string) ?? "starter";
+
       // Update the subscription record
       const { data, error } = await supabase
         .from("subscriptions")
@@ -86,7 +90,7 @@ export async function POST(req: NextRequest) {
             stripe_customer_id: session.customer as string,
             stripe_subscription_id: subscription.id,
             status: subscription.status,
-            plan_type: "basic",
+            plan_type: planType,
             billing_cycle: billingCycle,
             current_period_start: currentPeriodStart.toISOString(),
             current_period_end: currentPeriodEnd.toISOString(),
