@@ -108,11 +108,11 @@ function buildCalendarWebhookTools(orgId: string) {
             date: { type: "string", description: "Appointment date in YYYY-MM-DD format" },
             time: { type: "string", description: "Appointment time, e.g. '10:30 AM'" },
             customer_name: { type: "string", description: "Full name of the caller" },
-            customer_email: { type: "string", description: "Caller's email for calendar invite. Pass EXACTLY as spoken — e.g. 'uditi zero one three at gmail dot com'. The system converts it automatically." },
+            customer_email: { type: "string", description: "Caller's email. Pass EXACTLY as spoken — e.g. 'uditi zero one three at gmail dot com'. Omit this field entirely if you cannot get a valid email after 3 attempts." },
             customer_phone: { type: "string", description: "Caller's phone number (optional)" },
             purpose: { type: "string", description: "Purpose of appointment, e.g. 'consultation'" },
           },
-          required: ["org_id", "date", "time", "customer_name", "customer_email", "purpose"],
+          required: ["org_id", "date", "time", "customer_name", "purpose"],
         },
       },
     },
@@ -193,11 +193,29 @@ Examples of what callers say and what to pass:
 | "uditi zero one three at the rate gmail dot com" | "uditi zero one three at the rate gmail dot com" |
 | "uditi013 at gmail.com" | "uditi013 at gmail.com" |
 
+## Handling Tool Errors
+
+NEVER say phrases like "persistent issue", "technical difficulty", or "I'm having trouble" unless a tool explicitly tells you there is an error.
+
+When a tool returns a message, relay it WORD FOR WORD to the caller — do not paraphrase or summarise it into a generic error.
+
+If a tool says "not available on Suns" → tell the caller "We're not available on Sundays — our working days are Mon–Fri."
+If a tool says "no available slots today" → tell the caller exactly that and ask for a different date.
+If a tool returns a booking confirmation → read it back to the caller as-is.
+
+## Email Collection — Max 3 Attempts
+
+Try to collect a valid email using the two-part strategy. If after 3 attempts you still cannot get a valid email:
+- Say: "No problem, I'll go ahead and book this for you. We'll follow up about the confirmation."
+- Call bookAppointment WITHOUT the customer_email field (omit it entirely).
+- Never abandon the booking because of email — the appointment matters more.
+
 ## Conversation Style
 - Keep responses brief and natural for a phone call
 - Ask only one question at a time
 - Always be warm, professional, and helpful
 - Do not read out long lists — offer 3–4 time slots maximum
+- NEVER tell the caller there is a "persistent issue" — always give a specific, actionable response
 
 Current date: {{current_date}}`;
 

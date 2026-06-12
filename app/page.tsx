@@ -703,7 +703,7 @@ export default function LandingPage() {
                   ))}
                 </ul>
                 <Button className="w-full bg-white/10 hover:bg-white/20 text-white font-bold h-12 rounded-full transition-all duration-300 border border-white/20" asChild>
-                  <Link href="/signup">Start free trial</Link>
+                  <Link href="/signup?from=pricing">Get started</Link>
                 </Button>
               </div>
 
@@ -750,7 +750,7 @@ export default function LandingPage() {
                   ))}
                 </ul>
                 <Button className="relative w-full bg-[#84CC16] hover:bg-[#65A30D] text-black font-bold h-12 rounded-full shadow-lg shadow-lime-500/25 hover:shadow-lime-500/40 transition-all duration-300" asChild>
-                  <Link href="/signup">Start free trial</Link>
+                  <Link href="/signup?from=pricing">Get started</Link>
                 </Button>
               </div>
 
@@ -795,7 +795,7 @@ export default function LandingPage() {
                   ))}
                 </ul>
                 <Button className="w-full bg-white/10 hover:bg-white/20 text-white font-bold h-12 rounded-full transition-all duration-300 border border-white/20" asChild>
-                  <Link href="/signup">Start free trial</Link>
+                  <Link href="/signup?from=pricing">Get started</Link>
                 </Button>
               </div>
             </div>

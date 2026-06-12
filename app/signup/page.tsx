@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,11 +17,17 @@ import {
 import { Loader2 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { createClient } from "@/lib/supabase/client";
+import { PlanSelectionDialog } from "@/components/pricing/plan-selection-dialog";
 
-export default function SignupPage() {
+function SignupForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromPricing = searchParams.get("from") === "pricing";
+  const checkoutCancelled = searchParams.get("checkout") === "cancelled";
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPlanDialog, setShowPlanDialog] = useState(false);
   const [form, setForm] = useState({
     email: "",
     password: "",
@@ -29,6 +35,16 @@ export default function SignupPage() {
     phone: "",
     organisation_name: "",
   });
+
+  useEffect(() => {
+    if (checkoutCancelled) {
+      setShowPlanDialog(true);
+      toast({
+        title: "Checkout cancelled",
+        description: "Choose a plan to continue activating your account.",
+      });
+    }
+  }, [checkoutCancelled]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,9 +87,7 @@ export default function SignupPage() {
         return;
       }
 
-      // If email confirmation is required, Supabase may not return a session
       if (authData.session) {
-        // Create profile (trial, etc.) via API – session cookie is already set
         const res = await fetch("/api/auth/complete-signup", { method: "POST" });
         const completeData = await res.json();
         if (!res.ok) {
@@ -90,132 +104,159 @@ export default function SignupPage() {
 
         toast({
           title: "Account created",
-          description: "Your 7-day free trial has started. Redirecting...",
+          description: "Choose a plan to activate your subscription.",
         });
-        router.push("/dashboard");
-        router.refresh();
+        setShowPlanDialog(true);
+        setLoading(false);
       } else {
-        // Email confirmation required
         setError("");
         toast({
           title: "Check your email",
-          description: "We sent you a confirmation link. Click it to activate your account, then log in.",
+          description:
+            "We sent you a confirmation link. Click it to activate your account, then log in.",
         });
         router.push("/login");
         router.refresh();
       }
     } catch (err) {
       console.error("Signup error:", err);
-      const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      const message =
+        err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setError(message);
       toast({
         title: "Error",
         description: message,
         variant: "destructive",
       });
-    } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-12">
-      <Card className="w-full max-w-md shadow-xl border-2 border-black/10 dark:border-white/10">
-        <CardHeader className="text-center space-y-1">
-          <CardTitle className="text-2xl font-bold">Start your 7-day free trial</CardTitle>
-          <CardDescription>
-            B2B signup — no credit card required. Get full access for 7 days.
-          </CardDescription>
-        </CardHeader>
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
-            {error && (
-              <p className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
-                {error}
+    <>
+      <div className="flex min-h-screen items-center justify-center px-4 py-12">
+        <Card className="w-full max-w-md shadow-xl border-2 border-black/10 dark:border-white/10">
+          <CardHeader className="text-center space-y-1">
+            <CardTitle className="text-2xl font-bold">
+              {fromPricing ? "Create your account" : "Get started with CallTechAI"}
+            </CardTitle>
+            <CardDescription>
+              {fromPricing
+                ? "Sign up, then choose a plan to activate your AI receptionist."
+                : "Create your account, then pick a subscription plan."}
+            </CardDescription>
+          </CardHeader>
+          <form onSubmit={handleSubmit}>
+            <CardContent className="space-y-4">
+              {error && (
+                <p className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                  {error}
+                </p>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="full_name">Full name *</Label>
+                <Input
+                  id="full_name"
+                  placeholder="Jane Smith"
+                  value={form.full_name}
+                  onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
+                  required
+                  disabled={loading}
+                  autoComplete="name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Work email *</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="jane@company.com"
+                  value={form.email}
+                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                  required
+                  disabled={loading}
+                  autoComplete="email"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password *</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={form.password}
+                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                  required
+                  minLength={6}
+                  disabled={loading}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="phone">Phone number</Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  placeholder="+1 234 567 8900"
+                  value={form.phone}
+                  onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                  disabled={loading}
+                  autoComplete="tel"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="organisation_name">Organisation name *</Label>
+                <Input
+                  id="organisation_name"
+                  placeholder="Acme Inc."
+                  value={form.organisation_name}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, organisation_name: e.target.value }))
+                  }
+                  required
+                  disabled={loading}
+                  autoComplete="organization"
+                />
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-col gap-4">
+              <Button
+                type="submit"
+                className="w-full bg-lime-500 hover:bg-lime-600 text-black font-semibold"
+                disabled={loading}
+              >
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Continue
+              </Button>
+              <p className="text-sm text-muted-foreground text-center">
+                Already have an account?{" "}
+                <Link
+                  href="/login"
+                  className="font-medium text-lime-600 dark:text-lime-400 hover:underline"
+                >
+                  Log in
+                </Link>
               </p>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="full_name">Full name *</Label>
-              <Input
-                id="full_name"
-                placeholder="Jane Smith"
-                value={form.full_name}
-                onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))}
-                required
-                disabled={loading}
-                autoComplete="name"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Work email *</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="jane@company.com"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                required
-                disabled={loading}
-                autoComplete="email"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password *</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                required
-                minLength={6}
-                disabled={loading}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone number</Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="+1 234 567 8900"
-                value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                disabled={loading}
-                autoComplete="tel"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="organisation_name">Organisation name *</Label>
-              <Input
-                id="organisation_name"
-                placeholder="Acme Inc."
-                value={form.organisation_name}
-                onChange={(e) => setForm((f) => ({ ...f, organisation_name: e.target.value }))}
-                required
-                disabled={loading}
-                autoComplete="organization"
-              />
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col gap-4">
-            <Button
-              type="submit"
-              className="w-full bg-lime-500 hover:bg-lime-600 text-black font-semibold"
-              disabled={loading}
-            >
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Start free trial
-            </Button>
-            <p className="text-sm text-muted-foreground text-center">
-              Already have an account?{" "}
-              <Link href="/login" className="font-medium text-lime-600 dark:text-lime-400 hover:underline">
-                Log in
-              </Link>
-            </p>
-          </CardFooter>
-        </form>
-      </Card>
-    </div>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
+
+      <PlanSelectionDialog open={showPlanDialog} dismissible={false} />
+    </>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-lime-500" />
+        </div>
+      }
+    >
+      <SignupForm />
+    </Suspense>
   );
 }

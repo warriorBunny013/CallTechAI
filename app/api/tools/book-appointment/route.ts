@@ -54,6 +54,55 @@ function addMinutes(date: Date, mins: number): Date {
   return new Date(date.getTime() + mins * 60_000);
 }
 
+/** Add N calendar days to a YYYY-MM-DD string */
+function addDays(isoDate: string, n: number): string {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Normalise whatever the LLM sends as a date into YYYY-MM-DD.
+ * Handles: "today", "tomorrow", "2026-05-25", "05/25/2026", "May 25, 2026", etc.
+ */
+function normaliseDateArg(raw: string, timezone: string): string | null {
+  const s = raw.trim().toLowerCase();
+  const todayISO = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+  if (s === "today") return todayISO;
+  if (s === "tomorrow") return addDays(todayISO, 1);
+  if (s === "day after tomorrow" || s === "day after") return addDays(todayISO, 2);
+
+  const DAY_MAP: Record<string, number> = {
+    sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+    thursday: 4, friday: 5, saturday: 6,
+  };
+  const wdMatch = s.match(/(?:next|this)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/);
+  if (wdMatch) {
+    const targetDow = DAY_MAP[wdMatch[1]];
+    const [ty, tm, td] = todayISO.split("-").map(Number);
+    const todayDow = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
+    let diff = targetDow - todayDow;
+    if (diff <= 0) diff += 7;
+    return addDays(todayISO, diff);
+  }
+
+  const uppered = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(uppered)) return uppered;
+
+  const mdy = uppered.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, "0")}-${mdy[2].padStart(2, "0")}`;
+
+  const dmy = uppered.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+
+  const parsed = new Date(uppered);
+  if (!isNaN(parsed.getTime())) {
+    const utc = new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+    return utc.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
 /**
  * Normalise a voice-transcribed email address into a valid typed email.
  *
@@ -185,36 +234,36 @@ export async function POST(req: NextRequest) {
       return respond("What is this appointment for — for example, a consultation or a checkup?");
     }
 
-    // Email is required — validate after normalisation.
-    // If it still looks wrong, ask the caller to re-spell it in two parts.
+    // Email: validate if provided, skip gracefully if missing or unparseable.
+    // The agent should try to collect it via the two-part strategy (3 attempts),
+    // then omit it if still invalid so the booking isn't abandoned.
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    let validatedEmail: string | null = null;
 
-    if (!customerEmail) {
-      return respond(
-        "I still need your email address to send the calendar invite. " +
-        "Please tell me the part before the at-sign first, like 'john one two three'."
-      );
+    if (customerEmail) {
+      if (emailRegex.test(customerEmail)) {
+        validatedEmail = customerEmail;
+      } else {
+        // Return a correction prompt — agent will retry or skip after 3 attempts
+        return respond(
+          `I want to confirm your email. I understood: ${customerEmail}. ` +
+          "Could you say just the part before the at-sign, one character at a time? " +
+          "For example: 'u-d-i-t-i-0-1-3'. Then tell me your email service — Gmail, Yahoo, or Outlook?"
+        );
+      }
     }
+    // validatedEmail = null means no email provided — booking proceeds without it
 
-    if (!emailRegex.test(customerEmail)) {
-      // Give the caller the normalised version so they can correct it
-      return respond(
-        `I want to confirm your email. I understood it as: ${customerEmail}. ` +
-        "Could you say the username part — that's everything before the at-sign — one character at a time? " +
-        "For example: 'j-o-h-n-1-2-3'."
-      );
+    const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
+    const normalisedDate = date ? normaliseDateArg(date, timezone) : null;
+    if (!normalisedDate) {
+      return respond("I didn't catch the date correctly. Could you say it as month, day, year — like 'May twenty-fifth, twenty twenty-six'?");
     }
-
-    const validatedEmail = customerEmail;
-
-    const [year, month, day] = date.split("-").map(Number);
-    if (!year || !month || !day) {
-      return respond("I didn't catch the date. Could you say it again in year-month-day format like 2024-12-20?");
-    }
+    const [year, month, day] = normalisedDate.split("-").map(Number);
 
     const parsed = parseTime(time);
     if (!parsed) {
-      return respond("I didn't catch the time. Could you say it again, like 10:30 AM or 2 PM?");
+      return respond("I didn't catch the time. Could you say it again, like '10:30 AM' or '2 PM'?");
     }
 
     const supabase = getSupabaseService();
@@ -255,7 +304,7 @@ export async function POST(req: NextRequest) {
       bufferTime: typeof storedSettings?.bufferTime === "number" ? storedSettings.bufferTime : 0,
     };
 
-    const timezone = process.env.DEFAULT_TIMEZONE ?? "UTC";
+    // timezone already set above (used for date normalisation)
 
     const dateObj = new Date(Date.UTC(year, month - 1, day));
     const dayName = DAY_NAMES[dateObj.getUTCDay()];
